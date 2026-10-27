@@ -5,9 +5,12 @@ shader_type spatial;
 // Schnee über snow_line (flach, nicht in Wänden), Wasser (Alpha < 1) spiegelt.
 #include "res://shaders/noise.gdshaderinc"
 #include "res://shaders/clouds.gdshaderinc"
+#include "res://shaders/snow.gdshaderinc"
 
 global uniform float snow_line;
 global uniform vec3 sun_dir;  // zur Sonne (Wolkenschatten)
+global uniform vec3 player;
+global uniform float grass_r;  // Radius des Gras-Rasters (main._grass), 0 = kein Gras
 global uniform float wetness;  // Regen: Boden dunkler, glänzt etwas  // Welt-y, main.gd rechnet sie aus Klima + Monat
 
 uniform sampler2D ground : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
@@ -66,8 +69,13 @@ void fragment() {
 		col = mix(col, vec3(0.32, 0.29, 0.22) * (0.8 + 0.4 * n), water);
 		water = 0.0;
 	}
-	float snow = smoothstep(snow_line - 40.0, snow_line + 40.0, wpos.y + (n - 0.5) * 120.0) * smoothstep(0.6, 0.85, nrm.y);
+	float snow = snow_cover(wpos, nrm, snow_line);
+	snow *= mix(1.0, smoothstep(0.35, 0.6, t + 0.3 * smoothstep(0.0, 200.0, snow_depth(wpos, nrm, snow_line))), rock);  // Fels: Schnee in Rinnen und Bändern
 	col = mix(col, vec3(0.88, 0.9, 0.94) * (0.92 + 0.08 * n), snow * (1.0 - water));
+	// unter dem Gras um den Fahrer: Boden im Halbschatten der Halme, fleckig -> Lücken wirken wie Tiefe statt wie Rasen
+	float dens = smoothstep(0.74, 0.98, g.a) * (1.0 - rock) * (1.0 - snow) * (1.0 - water);
+	float near = smoothstep(grass_r, grass_r * 0.65, length(wpos.xz - player.xz));
+	col *= mix(1.0, 0.55 + 0.3 * noise(wpos.xz * 2.7), dens * near);
 	float tt = TIME * 0.5;
 	vec2 rip = vec2(noise(wpos.xz * 0.8 + tt) - noise(wpos.xz * 0.8 - tt + 3.7), noise(wpos.xz * 1.1 + vec2(tt, -tt)) - noise(wpos.zx * 1.1 - tt));
 	col *= 1.0 - 0.28 * wetness * (1.0 - snow);

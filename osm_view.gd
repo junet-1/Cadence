@@ -2,7 +2,7 @@ extends Control
 ## OSM-Kartenansicht: Kacheln laden + in user://tiles cachen, Mercator-Umrechnung. Basis für Minimap und Streckenwahl.
 
 const TILE_URL := "https://tile.openstreetmap.org/%s/%s/%s.png"
-const HEADERS := ["User-Agent: kurbel/0.1 (private cycling sim)"]
+const HEADERS := ["User-Agent: cadence/0.1 (private cycling sim)"]
 
 var zoom := 15
 var center := Vector2(0.5, 0.5)  # Mercator 0..1
@@ -15,6 +15,7 @@ var pool: Array[HTTPRequest] = []  # 4 parallele Downloads, wie ein Browser
 func _ready() -> void:
 	clip_contents = true
 	DirAccess.make_dir_recursive_absolute("user://tiles")
+	get_viewport().size_changed.connect(queue_redraw)  # Fenstergröße ändert den Stretch-Faktor und damit die Kachelgröße
 	for i in 4:
 		var h := HTTPRequest.new()
 		h.set_meta("key", "")
@@ -32,12 +33,23 @@ static func lonlat(m: Vector2) -> Vector2:
 	return Vector2(m.x * 360.0 - 180.0, rad_to_deg(atan(sinh(PI * (1.0 - 2.0 * m.y)))))
 
 
+func phys_xf() -> Transform2D:
+	## lokal -> Fensterpixel. get_screen_transform() enthält den Stretch (canvas_items) in 4.7 nicht, get_final_transform() schon.
+	return get_viewport().get_final_transform() * get_global_transform_with_canvas()
+
+
+func tile_px() -> float:
+	## Kachelgröße in Canvas-Einheiten: 1 Kachelpixel = 1 Bildschirmpixel, auch bei Stretch (canvas_items, 4K/5K)
+	return 256.0 / phys_xf().get_scale().x
+
+
 func world_px() -> float:
-	return 256.0 * pow(2.0, zoom)
+	return tile_px() * pow(2.0, zoom)
 
 
-func to_screen(m: Vector2) -> Vector2:
-	return (m - center) * world_px() + size / 2.0
+func to_screen(m: Vector2, wp := 0.0) -> Vector2:
+	## wp: world_px() einmal je Zeichnen übergeben (phys_xf je Punkt kostet bei 4000 Punkten ~1 ms)
+	return (m - center) * (wp if wp > 0.0 else world_px()) + size / 2.0
 
 
 func from_screen(p: Vector2) -> Vector2:
@@ -59,14 +71,20 @@ func draw_tiles() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.93, 0.92, 0.88))
 	var n := int(pow(2, zoom))
 	var c := center * world_px()
-	var t0 := ((c - size / 2.0) / 256.0).floor()
-	var t1 := ((c + size / 2.0) / 256.0).floor()
+	var tp := tile_px()
+	var xf := phys_xf()
+	var inv := xf.affine_inverse()
+	var t0 := ((c - size / 2.0) / tp).floor()
+	var t1 := ((c + size / 2.0) / tp).floor()
 	for ty in range(maxi(t0.y, 0), mini(t1.y, n - 1) + 1):
 		for tx in range(t0.x, t1.x + 1):
 			var tex = _tile(posmod(tx, n), ty)
-			if tex:
-				draw_texture(tex, Vector2(tx, ty) * 256.0 - c + size / 2.0)
-	draw_string(ThemeDB.fallback_font, Vector2(6, size.y - 6), "© OpenStreetMap", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.2, 0.2, 0.2))
+			if tex:  # Ecke auf ganze Bildschirmpixel, sonst filtert die GPU die Kachel unscharf
+				draw_texture_rect(tex, Rect2(inv * (xf * (Vector2(tx, ty) * tp - c + size / 2.0)).round(), Vector2(tp, tp)), false)
+	var font := get_theme_default_font()
+	var w := font.get_string_size("© OpenStreetMap", HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+	draw_rect(Rect2(size.x - w - 10, size.y - 20, w + 10, 20), Color(1, 1, 1, 0.7))
+	draw_string(font, Vector2(size.x - w - 5, size.y - 6), "© OpenStreetMap", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.2, 0.2, 0.2))
 
 
 func _tile(x: int, y: int) -> Variant:

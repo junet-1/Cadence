@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy", "scipy", "pillow", "mapbox-earcut"]
 # ///
-"""Baut ein Strecken-Paket für Kurbel aus GPX oder BRouter-Wegpunkten.
+"""Baut ein Strecken-Paket für Cadence aus GPX oder BRouter-Wegpunkten.
 
   uv run route.py taunus --via "8.57,50.20|8.458,50.232|8.47,50.18"   (lon,lat; BRouter plant die Route)
   uv run route.py hausrunde --gpx ~/Downloads/runde.gpx               (z.B. Komoot-Export)
@@ -25,7 +25,7 @@ import road
 import signs
 from biome import FARM, FOREST, MEADOW, NONE, PAVING, ROCK, SAND, SCRUB, SNOW, URBAN, WATER, WETLAND
 
-UA = {"User-Agent": "kurbel/0.1 (private cycling sim)"}
+UA = {"User-Agent": "cadence/0.1 (private cycling sim)"}
 CACHE = Path.home() / ".cache" / "kurbel"
 ZOOM = 13  # Terrarium ~12 m/px bei 50°N
 STEP = 5.0  # m zwischen Routenpunkten

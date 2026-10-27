@@ -5,7 +5,7 @@ extends Node3D
 ## Boden: Höhe und Wuchscode aus den Gras-Karten der feinen Kacheln (main.ground_at). Nicht deterministisch, nur Kulisse.
 
 enum { GRAZE, WALK, ALERT, FLEE }
-const MAX := {"reh": 7, "hase": 10}
+const MAX := {"reh": 12, "hase": 14}  # im Wald mehr Rehe: größere Rudel (_spawn)
 const OK_GROUND := {"reh": [200, 230, 255], "hase": [230, 255, 200]}  # Wald/trocken, Feld, Wiese (nie Ort, Wasser, kahl)
 
 var main: Node3D
@@ -57,7 +57,7 @@ func _process(delta: float) -> void:
 	var fwd: Vector3 = -main.rider.global_basis.z
 	spawn_t -= delta
 	if spawn_t <= 0.0:
-		spawn_t = 0.4
+		spawn_t = 0.25
 		_spawn()
 	for a in list.duplicate():
 		var p: Vector3 = a.node.global_position
@@ -86,10 +86,10 @@ func _spawn() -> void:
 	var g: Vector2 = main.ground_at(pos.x, pos.z)
 	if is_nan(g.x) or int(g.y) not in OK_GROUND[kind]:
 		return
-	for k in (randi_range(1, 3) if kind == "reh" else 1):
+	for k in ((randi_range(2, 4) if int(g.y) == 200 else randi_range(1, 3)) if kind == "reh" else (randi_range(1, 2) if int(g.y) == 200 else 1)):
 		var q := pos + Vector3(randf_range(-6, 6), 0, randf_range(-6, 6))
 		var gq: Vector2 = main.ground_at(q.x, q.z)
-		if not is_nan(gq.x) and count[kind] + k <= MAX[kind]:
+		if not is_nan(gq.x) and count[kind] + k < MAX[kind]:
 			_make(kind, Vector3(q.x, gq.x, q.z))
 
 

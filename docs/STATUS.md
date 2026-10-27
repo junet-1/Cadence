@@ -1,6 +1,235 @@
-# Kurbel – status, decisions, next steps
+# Cadence (formerly Kurbel) – status, decisions, next steps
 
 Short and current. Newest decisions at the top of their section. How to work: `CLAUDE.md`.
+
+## Spruce sprays crossed, grass with depth, real flowers (2026-10-27)
+- User: "Tannen sehen ganz komisch aus", ground plants "keine Tiefe". Spruce sprays lay flat -> from the road only edges and
+  bare sticks. Now each spray is a crossed pair (tilted flat + upright), larger, whorls every ~1.1 m, darker core.
+  `trees.py --` preview is now EEVEE with the atlas (looks like the game; `-- out.glb preview.png`).
+- Grass (`main._grass_mesh`): 12 thin curved blades (3 segments, pointed) per tuft instead of 6 wedges, indexed; per-blade
+  brightness/yellowing in COLOR.rg; blade normals mixed 55 % with up (light/shadow side). `grass.gdshader`: dark base
+  (×0.35 -> ×1.15 at the tip), straw tint. `terrain.gdshader`: ground under grass darkened and blotchy near the rider
+  (global `grass_r` = grass radius, fades with the grass) so gaps read as shade.
+- Flowers: stem + 2 leaves, 5 petals cupped around a centre (COLOR.a 1 / 0.5), head nods.
+- Cost, same session (the user's game ran on the same GPU, so absolute FPS is low): grass on/off 79/82 FPS; tree detail
+  600 m vs 200 m 75/86 FPS (45 M vs 29 M triangles).
+
+## Detailed trees: leaf cards (2026-10-27)
+- User: trees "sehr off, zu wenig Detail" (crowns were 20–40 smooth icosahedron blobs, spruce = stacked cones). Blender MCP is
+  only configured for ~/cargo, so the existing headless pipeline was extended (`blender -b -P blender/trees.py -- models/trees.glb`).
+- `trees.py` renders `models/leaves.png` (1024², 2×2: broad leaves, small leaves, spruce spray, pine tufts; grey + alpha,
+  colour under transparent pixels = mean grey against dark mip fringes). Near versions: one more branching level, 160–780
+  double-sided cards per tree (`Tree.card/leaves`) + small inner blobs against see-through; spruce = whorls of drooping
+  branches with flat needle sprays + slim core; cypress = core + upright needle cards. `_lod` unchanged (blobs, no cards).
+- `props.gdshader`: UV.x > 0.999 = card -> sample atlas, discard below 0.5 alpha (alpha raised with mip level so crowns stay
+  dense far away), colour × texture × 1.55. Everything else in props (houses, deco, animals) has UV 0 -> unchanged.
+  `main.leaf_atlas()` loads it from disk like the glb (`data()`), own mipmaps; `install.sh` copies it.
+- Cost (forest, same seed/spot, hidden window, VSync off): 153 -> 141 FPS, 14.2 M -> 20.8 M triangles/frame.
+- Detail distance tripled on user request: trees 200 -> 600 m, bushes 80 -> 240 m, undergrowth 40 -> 120 m (`main.TREE_DETAIL`,
+  `plant_multimesh`). Same spot: 41 M triangles/frame (was 21 M), FPS in the hidden test window not meaningfully lower.
+- Next: palm fronds with a texture; cards for `_lod` if the 600 m switch still shows.
+- Safety: a second instance (GAME_PORT taken) or `MCP_BACKGROUND=1` never sends to the bridge (`main.trainer_owner`). Two MCP
+  test runs had sent SIM grades to the user's running bridge (real KICKR) while they rode the installed game.
+
+## Options menu + ride weather/time (2026-10-27)
+- User: settings "didn't apply". There was no Apply at all: video options applied on each dropdown change, and in fullscreen
+  "resolution" only changed `scaling_3d_scale` silently. Now `options.gd` (start screen + pause menu): staged values, "Übernehmen"
+  saves `user://start.cfg [video]` and applies, then the status line reads back mode/size/3D size from DisplayServer; "Zurück"
+  discards. Window size (windowed only) and 3D resolution % are separate controls. Grass/shadows/SSAO/volume moved here
+  (grass from next ride; shadows/SSAO live via `main.apply_settings`). `[video] resolution` from before is ignored (defaults).
+- Verified with a real window (X11/XWayland, 5120×2160): windowed 1280×720, maximized, fullscreen, scale, FPS cap, VSync, volume.
+- `Options.store()` reloads before writing: start screen, options and ride pickers write the same file without clobbering.
+- Ride pickers (start screen grid, picker panel): weather preset (weather.gd PRESETS; `weather.begin` snaps state, road wet in
+  rain) and time of day as local solar time -> `time_shift_hours` for this ride only (`main._set_clock`, -2 = sun 6° up in
+  the afternoon). Passed via `Engine` meta "ride". `cadence.cfg [sound]` removed again (volume lives in options).
+- Test runs under `MCP_BACKGROUND=1` start the bridge with `--fake`: an MCP test had connected to the real KICKR.
+- Rain/wet spray were too loud and harsh (user): rain 0.45 -> 0.12, band 250–3200 Hz, fewer/softer drops; spray 0.12, ≤ 4.5 kHz.
+
+## Sound (2026-10-27)
+- `sound.gd`: no audio files, everything synthesized once at start in a WorkerThreadPool task (~95 ms): looped band-passed
+  noise (air at the ear = ride speed + weather wind, tyre, wet spray, rain + drops, leaf rustle with gusts), freewheel click
+  loop (pitch = wheel rev/s × `POE` / 48, only while cadence < 5), bird phrases (4 patterns × 2) and an owl as one-shots on
+  3 `AudioStreamPlayer3D` 15–55 m around the rider. Per frame only volume/pitch; tree count within 40 m every 0.5 s from
+  `main.tree_pts` (all trees, filled in `add_leaf_trees`, dropped with tiles). Bike sounds mute in pause. Visual-only rule holds.
+- Not done: surface-dependent tyre sound (gravel), the partner's bike, cicadas/crickets in warm biomes, water near rivers.
+
+## Standalone Linux build (2026-10-27)
+- `./install.sh`: `godot --export-release Linux` (preset in `export_presets.cfg`, pck embedded, `routes/` excluded) to
+  `~/.local/share/cadence/cadence.x86_64`, copies `*.py`, `models/*.glb`, `workouts/`, `routes/` (reflink on btrfs) next to it, writes
+  `~/.local/share/applications/cadence.desktop`. `cadence.cfg` is only copied if missing.
+- `main.gd::data(p)`: every on-disk path (Python scripts, routes, glb, workouts, cfg) goes through it; in an export (`template`
+  feature) `res://` maps to the executable's directory. New disk paths must use it, or they break only in the export.
+- Debt: the install is a snapshot; routes built from the installed game land in its own `routes/`, not the repo's. uv is still required.
+
+## Terrain quality pass: walls, seams, road integration (2026-10-27, world.py VERSION 12)
+Root causes found by measuring (`uv run world.py diag --workout F --seed N --biome B [--profile P] --km a,b,c`, new):
+- **Filled basins** (`terrain.erode`): depressions were filled to spill level in the terrain itself -> flat plateaus up to
+  +97 m with walls around; worst on switchback blocks (box = hillside surrounded by valley walls = basin). Now fill only
+  routes water (lakes); no erosion inside a basin, the outlet incises. Erosion dh max +97.5 -> +22 m (VO2/Reise 7, km 10.6).
+- **Closed basins at road sags** (`_drains`/`_carve`): every low point of the road was ringed by valley walls. A side valley
+  (relief squeezed toward a meandering axis, floor −2.5 %) leaves each sag (≥ 10 m counter-climb both sides) on the downhill side.
+- **Crease rays from switchbacks** (`params`): every support extrapolated its block plane ≤ 150 m, IDW switched supports at
+  medial lines -> straight creases hundreds of m long (valley floor up to 147 % steep). Now `_floor`: plane clamped to the
+  block box + residual of the legs (64 nearest road points), geometric weight around the box; `hgrad/cgrad` removed.
+  Needle creases between legs (13-NN residual) fixed with 64-NN.
+- **Vertical walls at the cut/fill reach** (`terrain.conform`): a 1:1 cut / 1:1.5 fill never meets terrain steeper than
+  itself, at 60–80 m the cone was switched off -> 100 m walls (alpen seed 3 km 6, slope 57.9). Batters now steepen beyond
+  25 m where the terrain out-climbs them (rock cut / retaining-wall steep). Same spot: a 9 %-limited **side road ran 400 m
+  inside a mountain** and conform dug a trench -> `_sides.add` ends a side road where its profile leaves the terrain by > 10 m.
+- **LOD seams** (far 32 m vs mid 8 m tiles): up to 11.9 m gaps, the 40 m skirt stood as a wall. Only mid tiles border far
+  tiles, and only on 1024 m lines -> mid tiles geomorph a 32 m band onto the far triangulation there (`_far_edge`, away from
+  roads; props follow). fm gap max 11.9 -> 2.7 m (p99 5.5 -> 1.0).
+- **Cliff-band props** (`_cliffs`) read as stacked slabs in rows -> only slope > 1.15, narrower bands, 45 %, sunk 35 %.
+- Biomes: treeline as a band (south faces higher, north lower, wavy; forest thins over ~200 m, none on slope > 0.8; single
+  trees up to ~140 m above), alpine palette/rock use it. Snow (`shaders/snow.gdshaderinc`, shared by terrain, road shoulder,
+  grass): wavy line, north faces −90 m, flat holds more, on rock only in streaks.
+- Road: crossfall in curves (`World.bank`, ≤ 4 %, `edge_y()`; side-road mouths use it). Visual only.
+- Unchanged on purpose: `route.pos` SHA1 identical (VO2 Reise 7, Alpen panorama 7, Wald 3, free Mittelmeer 1) -> SIM grades
+  identical. Erosion fade at 1.4–1.9 km kept (seam no longer visible once fills were gone). Grade/hairpin geometry untouched.
+- Forest (user request): graded verge (gravel 0.7 m -> sparse short grass -> meadow by ~3 m, noisy edge); undergrowth
+  `farn`/`hochgras`/`staude` (blender/trees.py, near tiles only, visible 160–200 m; ferns in patches, tall grass/herbs on
+  verges and edges, lush biomes only); animals max 12 deer / 14 hares, forest groups 2–4 (cap off-by-one fixed).
+  ~700 ferns + ~150 tufts per forest tile, near tile build unchanged (~120 ms).
+- Verified: tests (terrain/world/route, selftest.gd), diag on Reise 7 / Alpen 7 panorama / Alpen 3 anstieg / Wald 3 /
+  Wüste 3 / Mittelmeer 5, screenshots (Mischwald 3 forest road + floor, Reise 7 alpine flank). Not verified: hairpins
+  in-game after kurbel-21's concurrent `_hairpins` rework; motion of the new plants; performance on weaker GPUs.
+- Debt: desert near/mid seams up to ~10 m (sharp terraces on near tiles vs box-filtered on mid; skirt 5 m) – needs the
+  same filter on near-tile edges or a deeper mid skirt; steepened batters have no wall mesh (rock-textured faces only).
+
+## Video settings (2026-10-27)
+- (Superseded by the options menu above.) Start screen "Anzeige": window mode (windowed / borderless fullscreen / exclusive), resolution, frame rate. Saved in
+  `user://start.cfg [video]`, applied by `start.gd::apply_video` on every start-screen load; no `[video]` section = project.godot untouched.
+- Godot never changes the monitor mode: fullscreen = native resolution, a smaller pick sets `root.scaling_3d_scale` (3D only, HUD sharp).
+  Refresh rate can't be set from Godot -> VSync or `Engine.max_fps` cap. Skipped under `MCP_BACKGROUND=1` so MCP tests stay hidden.
+- ponytail: bilinear 3D scaling; FSR (`scaling_3d_mode`) if low scales look soft.
+
+## Climbs onto mountains, irregular switchbacks (2026-10-27, world.py VERSION 13)
+- User: "die Berge um mich rum sind alle höher, ich fahre zwischen Bergen hoch". Cause: valley walls, mountains and hills in
+  `_macro` are relative to the smoothed road height, and climbs even got ×1.35 mountains -> every climb was a valley.
+  Now `_coarse` derives per road sample cw (climb > ~150 m within ±8 km) and pk (top 60 % of the climb): mountains/valley
+  walls × (1 − 0.5 cw) and massif × (1 − 0.85 pk), valley walls × (1 − pk), hills × (1 − 0.8 pk), cross slope × (1 − 0.7 pk),
+  forest × (1 − 0.8 pk) (alpine meadow on top), and a fall-off beside the road at the top (~40 % slope after 30 m, at most
+  80 % of the climb) -> ridge/dome. Fog −45 % at summits (atmo). Switchback blocks keep 450 m away from summits of climbs
+  > 2.5 km (their plane made a plateau). Measured at the summit, ring 300/700/1100/1500 m: VO2 Alpen Panorama 7 100/100/100/94 %
+  of the terrain lower, Mischwald Panorama 77298 100 % (was 29–56 %). Test asserts ≥ 70 % at 700/1100 m.
+- First version used sign(t) of the nearest road point for "valley side open" -> flipped between road parts (kurbel-ed's
+  `world.py diag`, alpen seed 3 anstieg: slopes up to 92, 19 m steps, LOD gaps 84 m). Replaced by the smooth factor above;
+  diag now slope max 1.5/0.94/1.1, step ≤ 0.5 m, LOD ≤ 3.6 m.
+- Switchbacks (`_hairpins`) were identical legs/hairpins: now leg lengths × 0.6–1.4, leg angle ±3° per leg (fanning kept),
+  radius per hairpin, mild S-bend per leg (net 0), lengths re-balanced so the block length and exit heading are exact;
+  no switchbacks in regions with |grade| < 4.5 % (gentle panorama descents had 8 km of them). Grades along s unchanged.
+  The documented 0.3 m gap tolerance under the shoulder edge now applies to whole switchback blocks (one leg case, VO2 Reise 7
+  km 10.9, 16 cm).
+- Verified in screenshots: summit ridge seen from 2.4 m and 25 m (valley below, mountains beyond), switchbacks top-down.
+
+## Side roads, forks, bridges (2026-10-27, world.py VERSION 11)
+- `world._sides` (visual only; rider stays on the main road): from the seed, junctions every ~0.8–2.4 km (÷ village weight,
+  × 1.6 on steep grades), none in switchback blocks ±400 m, tight curves, or into water (water regions: only the dry side).
+  13 % crossings (both sides), 25 % forks after 100–400 m (40–70°), 12 % bridges over the main road (rider passes under:
+  deck = max main height ±30 m + 7 m, ramps ≤ 7 %, only where the natural ground fits). Side roads: 55–125° off, 10-m steps
+  with smoothed-noise curvature (R ≥ ~180 m), 0.6–2.5 km, end when they come within 70 m of the main road, 20 m of a house
+  centre, or 45 m of another side road. Heights = macro relief (no erosion) blended from the main-road height at the mouth,
+  ≤ 9 %/10 m, smoothed. 30 % gravel tracks outside villages (shader grass strip), hw ≥ 2.6 paved get a centre line.
+- Terrain: `field` conforms to side roads first (bench 1.5 m), then the main road as before (its bench/cuts win; the bridge
+  embankments end in the main road's 1:1 cut slope). Afterwards `d` = distance to the nearest road edge of either -> trees,
+  rocks, cliffs, forest, grass (grow PAVING) keep off side roads. House deco filtered.
+- Meshes go into the road chunk of the junction (`road_chunk` + `_side_mesh`), no streaming change: same 6-column cross
+  section; the first section is pushed along the side road onto the main/parent edge line (flush, no gap/overlap); main
+  road edge line broken at mouths via CUSTOM0 (`.c0` now deleted by world_stream.gd); delineators skipped there. Bridges are
+  resampled at 2.5 m: concrete deck sides, soffit, parapets, two piers 2.2 m outside the main road edge (interpolated).
+- Measured: route.pos SHA1 unchanged on VO2 Reise 7, VO2 Alpen Panorama 7, Grundlage 60 Wald 3, free ride Mittelmeer 1.
+  Grundlage 60 Wald 3: 27 T + 6 forks + 4 bridges over 79 km (59 km of side road); init +0.4 s; world ready 9.2 s; 30 s at
+  ~58 km/h: frame p50 = p99 16.7 ms (vsync), 1/1799 > 25 ms, 690 draw calls. Road chunks with side roads ~100–250 ms in the
+  generator process (shoulder colour sampled every 40 m). Self-test: count, bridge clearance ≥ 5.5 m, piers ≥ 1 m off the
+  edge, flush mouths, no return within 69 m, grade < 11.5 %, terrain not above side roads.
+- Verified in screenshots: bridge with two piers from the ride camera (km 1.7), gravel track mouth top-down (km 5.1), village
+  street with centre line (km 23.9). First version put both piers on the main-road centreline (10 m sampling) – fixed.
+- Mouths fixed after a user screenshot (green strip + square corners at a gravel track, Mischwald seed 77298 km 0.9): the
+  side road started at the outer shoulder edge (hw + 0.35), so the main road's grass-coloured shoulder showed between the two
+  asphalts. Now the mouth reaches 10 cm onto the main asphalt, 1 cm above it (`edge_y`, with kurbel-ed's crossfall), side
+  shoulders stay low there, and both corners get a fillet fan (quadratic Bézier, R = 6 m asphalt / 4 m gravel, longer on acute
+  angles; heights from the main edge and the side road). `_side_index` widens the first segment by R, so bench, grass and
+  trees respect the flare. Verified top-down and from 1.8 m eye height.
+- Not done: underpass (main road on a bridge over a side road) – the terrain is a height field, no hole under the main road;
+  no rounded mouth corners, no give-way lines/signs at side roads, no traffic; houses only along the main road, so village
+  junctions are rare; side roads have no far-tile representation beyond their road-chunk mesh.
+
+## Terrain profile + snowy summits (2026-10-27, world.py VERSION 10)
+- Start screen "Gelände" (`opts.profile` -> `world.py --profile`, in the world key): auto (old behaviour: workout zones pick
+  scenes), flach (FLAT scenes by biome weight), wellig (new scene `hills`, ±5 %), leicht (new `gentle`, ~3 %), anstieg
+  (`climb` the whole workout), panorama (`climb` for 55 % of the workout time, then `descent`). After the workout: one descent,
+  then free-ride scenes; free ride cycles per CYCLE = 60 min. Profile descents spread the gain over the whole descent run.
+  Measured VO2 5×3 seed 7 Alpen: anstieg 677 m in 10.5 km (p50 6.5 %), panorama summit at 26 % of the distance (400 m),
+  flach p95 |grade| 0.8 %, wellig p5/p95 −5.4/4.9 % with net 0. Self-test covers all four + snow. Auto worlds keep their
+  scenes (only VERSION/snow changed). Trainer: SIM gets exactly the profile's grades (chosen by the rider); ERG unchanged.
+- Snow: alpen `cap = 140`: where the road gains > 300 m within ±8 km, the snow line drops to 140 m below the local top (±2 km)
+  -> top of big alpine climbs white (terrain, grass gone, snow on crowns), rain falls as snow there (existing weather.gd rule).
+  Road shader: shoulder outside the carriageway takes snow above `snow_line` (was a green strip); asphalt stays clear.
+- Verified in screenshots (VO2 5×3, Alpen, Panorama, seed 7): summit at km 6.5 / 1300 m in snow, weather preset Regen ->
+  "Schnee" with flakes. No snow in Mischwald/Mittelmeer/Wüste by design.
+- Fix: the summit was the highest point within ±2 km, so mid-climb the snow line followed the rider (white from halfway up).
+  Now `World.snow_line()` uses the highest point within ±8 km (the actual summit): panorama seed 7 snow from 260 m, summit
+  400 m (test: 30 % up the climb the line is > 100 m above the road). Same function feeds `_plants`: within 80 m below the
+  snow line of the nearest road point only spruce (75 %) / pine – no beech/oak/birch in the snow. Garden trees in villages
+  (`_deco`) are not switched.
+
+## Cliff bands on mountains (2026-10-27, world.py VERSION 9)
+- Rocks on steep mountain rock were only 2.5–7.5 m boulders. New `fels_wand_{granit,kalk,sand}_{0,1}` (+ `_lod`) in
+  `blender/deco.py`: wide slab, face leans back ~75° into the slope, vertical ribs, set-back ledges, jagged crest with towers,
+  lens-shaped plan (ends taper); 588 / 108 faces.
+- `world._cliffs` (fine + mid tiles, same 24 m grid and seeds for both LODs): only where exposed rock > 0.5 and slope > 0.9,
+  and only in height bands (every ~70 m, warped by fbm, 28 % of the height) -> horizontal cliff bands with scree/grass between,
+  not a carpet; 15–60 m high, height varies smoothly over the area (fbm, not per cell -> continuous band instead of blocks),
+  front faces downhill (gradient from 4 extra height samples), ends kept ≥ 8 m from the road edge. Biome mix: granite /
+  limestone / sandstone. Visible to 1.5 km like other `fels*` deco, LOD beyond 200 m.
+- VO2/Reise seed 7 alpine window: ~1000 wall segments loaded (km 9.0 and 10.6). Same view at km 11.6: 691 draw calls,
+  4.7 M triangles, frames vsync-capped 16.7 ms p99. First attempt (every 18 m cell, 10–35 m) covered whole slopes like
+  bricks; per-cell heights made boxes – both fixed as above (fly-mode screenshots). Grades/route.pos untouched.
+- Not done: far tiles (32 m, > ~3 km) get no cliffs, so distant ridges stay smooth; Mittelmeer/Wüste cliffs not checked in-game.
+
+## Cadence polish pass (2026-10-27)
+- **Rename Kurbel -> Cadence**: project name, UI, docs, TCX default name, HTTP User-Agent. Config is `cadence.cfg`
+  (`main.config()` falls back to `kurbel.cfg`). Godot's user dir follows the project name (`app_userdata/Cadence`);
+  `start.gd::migrate_user_dir` moves rides/tiles/preview/start.cfg from `app_userdata/Kurbel` once (never overwrites; an
+  empty new dir is replaced). Kept on purpose: repo dir, `~/.cache/kurbel` (geo cache), "kurbel" as a village-name syllable
+  in world.py (changing it would change worlds).
+- **Correctness**: power/cadence/HR stayed at the last value forever when the trainer dropped (rider kept riding, workout
+  clock and TCX recorded phantom watts) -> zeroed once after 3 s without data (`SENSOR_TIMEOUT`), red HUD chip + toast.
+  HUD appeared ~6 s before the world existed (rider over fog) -> opaque loading screen until `world_ready` (workout, tile
+  count, seconds); generator crash after start is now shown with "auswerten"/"Startbildschirm" buttons (was invisible).
+  Pause menu didn't pause -> `main.paused()` (menu or recap open) freezes distance, ride time, workout clock and recording;
+  the trainer keeps getting the same command. Recap buttons were below the fold at 1600×900 -> fixed footer.
+  Start screen overflowed with "Erweitert" open -> settings moved left, map button to the header, scroll fallback.
+  `bridge.py` crashed with "Address already in use" when a ride started while the previous bridge still held port 47801
+  (watchdog ≤ 10 s) -> bind retried 15 s (lifecycle only, protocol untouched). Ride files transliterate umlauts.
+- **UI**: one theme for every screen (`ui_theme.gd`: focus rings for keyboard navigation, disabled colours,
+  `UI.primary`). `canvas_items` stretch (base 1600×900, expand): same layout scaled 1.2× at 1080p, 1.6× at 1440p/3440×1440,
+  2.4× at 5120×2160; map tiles and the 3D preview render 1:1 in physical pixels. Picker/preview restyled (scrolling route
+  list with km, build progress + cancel, actionable network errors, grade legend, Esc/Enter). ERG/SIM explained on the
+  start screen; free ride shows SIM (mode disabled). Workout bar, HUD and recap share the Coggan zone colours. HUD: trainer
+  status chip, zone-coloured power tile frame (number stays white), peer distance as a ride-panel row, accent countdown.
+- **Rider**: `blender/rider.py` -> `models/rider.glb` -> `rider.gd` (road bike + rider ~6.6k tris, kit colour per rider,
+  2-bone leg IK on the pedals, wheels turn with speed); peer speed estimated from packets. Camera (0, 2.1, 4.6), −7°.
+- Measured (RX 9070 XT, MCP background window, vsync 60): VO2/Reise seed 7 at ~58 km/h for 40 s: frame p50 = p99 =
+  16.7 ms, max 26 ms (1/2397 frames > 25 ms) -> streaming is not a bottleneck, nothing optimised. World ready 7.8–8.7 s.
+  6 × 2 km jumps (13 km): RAM 129–142 MB, VRAM 256–280 MB, node count bounded -> no growth. Real route Gotthard loads in 0.9 s.
+- Verified in screenshots: start (ERG/SIM/free ride, settings open), loading screen, HUD, pause, recap, picker, preview,
+  Gotthard real route. Sensor loss verified by injecting one UDP packet then silence. Not verified: real Kickr/Zwift
+  hardware, 5120×2160 window (scaling math only), two riders over the network (peer speed estimate untested).
+- **World (world.py VERSION 8)**: fine/mid tiles are chosen from the road stretch around the rider (was: nearest road point
+  to the tile centre -> on winding sections the rider's own tile was only a 32 m far block, rider buried in a slope, VO2/Reise
+  seed 7 km 10.6; 11 of 254 sample positions affected, now 0, self-test added); strata box-filtered on mid/far tiles (sawtooth
+  stripes on desert slopes); road shoulder as its own strip (crisp asphalt edge); sky cubemap returns a warm ground bounce
+  below the horizon (less turquoise shadows). `route.pos` SHA1 identical before/after (Reise 7, Wüste 3) -> grades unchanged.
+  Road meshes cast no shadow (blue-grey smear along the edge at low sun, both world modes). Dusk: dropped
+  `background_energy_multiplier` (it inflated reflections and haze -> blue world, road like water, white grass), neutral
+  ambient by day + 45 % more at dusk. FPS same view unchanged (±2 %) except km 10.6 which now actually renders its tiles.
+- Real routes show/record real elevation (`meta.climate.elev0`; was relative height labelled "ü. M.").
+  `bridge.py` watchdog also ends a bridge that never got a packet (was: ran forever).
+- Debt: map tiles 1:1 make OSM labels small at ≥ 1.6× (needs @2x tiles); old `app_userdata/Kurbel/tiles` stays when the new
+  cache already has tiles; rider/geometry constants duplicated in rider.py and rider.gd; two game instances on one machine
+  share `user://world` (the second deletes the first's tiles – dev-only); teal tint in desert shadows mid-afternoon; wavy
+  self-shadow bands on bumpy ground at very low sun; sensor timeout may flag a trainer that stops notifying at standstill.
 
 ## Rocks by biome (2026-10-27, world.py VERSION 7)
 - `blender/deco.py` adds `fels_{granit,kalk,sand,moos}_{0,1,2}` (+ `_lod`): icosphere with radial jitter and planar fracture

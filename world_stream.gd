@@ -43,9 +43,10 @@ func start(opts: Dictionary) -> void:
 	DirAccess.make_dir_recursive_absolute(dir)
 	for f in DirAccess.get_files_at(dir):  # Reste einer alten Fahrt
 		DirAccess.remove_absolute(dir + "/" + f)
-	var args := ["run", ProjectSettings.globalize_path("res://world.py"), "stream", "--out", dir,
+	var args := ["run", ProjectSettings.globalize_path(main.data("res://world.py")), "stream", "--out", dir,
 		"--seed", str(opts.get("seed", 1)), "--biome", str(opts.get("biome", "reise")),
-		"--drama", str(opts.get("drama", 1.0)), "--density", str(opts.get("density", 1.0)), "--variation", str(opts.get("variation", 1.0))]
+		"--drama", str(opts.get("drama", 1.0)), "--density", str(opts.get("density", 1.0)), "--variation", str(opts.get("variation", 1.0)),
+		"--profile", str(opts.get("profile", "auto"))]
 	if opts.get("workout", "") != "":
 		args += ["--workout", ProjectSettings.globalize_path(opts.workout), "--ftp", str(opts.get("ftp", 250))]
 	var r := OS.execute_with_pipe(main.uv(), args, false)
@@ -112,6 +113,7 @@ func _read() -> void:
 			want.erase(msg.drop)
 			grass_maps.erase(msg.drop)
 			main.leaf_pts.erase(msg.drop)
+			main.tree_pts.erase(msg.drop)
 			if nodes.has(msg.drop):
 				nodes[msg.drop].queue_free()
 				nodes.erase(msg.drop)
@@ -186,7 +188,7 @@ func _loader() -> void:
 			DirAccess.remove_absolute(base + ".g.png")
 			var g: Array = msg.grass
 			data.heights = Image.create_from_data(int(g[4]), int(g[5]), false, Image.FORMAT_RF, _take(base + ".h.f32"))
-		for ext in [".pos", ".nrm", ".idx", ".col", ".uv", ".uv2", ".water.pos", ".water.nrm", ".water.idx", ".water.col", ".water.uv"]:
+		for ext in [".pos", ".nrm", ".idx", ".col", ".uv", ".uv2", ".c0", ".water.pos", ".water.nrm", ".water.idx", ".water.col", ".water.uv"]:
 			if FileAccess.file_exists(base + ext):
 				DirAccess.remove_absolute(base + ext)
 		mutex.lock()
@@ -231,7 +233,7 @@ func _build(msg: Dictionary, data: Dictionary) -> Node3D:
 		var mi := MeshInstance3D.new()
 		mi.mesh = mesh
 		mi.material_override = mats.road if is_road else mats.terrain
-		if lod == "far":
+		if lod == "far" or is_road:  # Fahrbahn liegt 0,2 m über der Trasse: ihr Schatten wäre bei tiefer Sonne ein blaugrauer Streifen an der Kante
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		root.add_child(mi)
 	if data.has("water"):
@@ -243,7 +245,7 @@ func _build(msg: Dictionary, data: Dictionary) -> Node3D:
 	for kind in main.TREES:
 		if data.has(kind):
 			# nah Detailmodell, dahinter Fernversion; Bäume bis 1,5 km, Büsche bis 400 m
-			main.plant_multimesh(root, props, kind, data[kind], mats[kind], 400.0 if kind == "busch" else 1500.0)
+			main.plant_multimesh(root, props, kind, data[kind], mats[kind], main.UNDER.get(kind, 400.0 if kind == "busch" else 1500.0))
 			if not is_road and lod == "near":
 				main.add_leaf_trees(msg.tile, kind, data[kind])
 	for k in data:

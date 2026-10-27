@@ -10,7 +10,8 @@ config_version=5
 
 [application]
 
-config/name="Kurbel"
+config/name="Cadence"
+config/description="Indoor-Radsimulator: Workout-Welten und echte Strecken"
 run/main_scene="res://start.tscn"
 config/features=PackedStringArray("4.7")
 
@@ -18,8 +19,15 @@ config/features=PackedStringArray("4.7")
 
 window/size/viewport_width=1600
 window/size/viewport_height=900
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 
 [shader_globals]
+
+grass_r={
+"type": "float",
+"value": 0.0
+}
 
 night={
 "type": "float",

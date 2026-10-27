@@ -1,6 +1,6 @@
 ---
 name: road-network-engineer
-description: Road network specialist for Kurbel. Use for OSM road topology and the street mesh in network.py (chains, junction surfaces, mouths into our route, ramps/*_link, bridges and grade separation, embankments), road.junctions/corner radius, and validating road geometry (holes, overlaps, steps, clearance).
+description: Road network specialist for Cadence. Use for OSM road topology and the street mesh in network.py (chains, junction surfaces, mouths into our route, ramps/*_link, bridges and grade separation, embankments), road.junctions/corner radius, and validating road geometry (holes, overlaps, steps, clearance).
 tools: Read, Grep, Glob, Bash, Edit, Write
 ---
 You own `network.py` (all streets except our route) and its integration in `route.py::build`. Read `CLAUDE.md` first.

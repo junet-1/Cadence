@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = []
 # ///
-"""Workouts für Kurbel: einlesen, normalisieren, einordnen, Bauplan für die prozedurale Welt (world.py).
+"""Workouts für Cadence: einlesen, normalisieren, einordnen, Bauplan für die prozedurale Welt (world.py).
 
 Formate: .zwo (Zwift, Anteil FTP), .erg (Minuten + Watt, FTP aus dem Kopf oder --ftp), .mrc (Minuten + % FTP).
 Gemeinsame Darstellung (nur Zeit und Anteil FTP, nichts über Geometrie):

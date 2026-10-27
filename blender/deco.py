@@ -263,6 +263,72 @@ for _k in ("granit", "kalk", "sand", "moos"):
         ROCKS[f"fels_{_k}_{_i}"] = fels(_k, _i, True)
         ROCKS[f"fels_{_k}_{_i}_lod"] = fels(_k, _i, False)
 
+
+def wand(kind, i, detail):
+    """Felswand (world._cliffs setzt sie quer in steile Felshänge, 15–60 m hoch, überlappend -> Felsband): Breite X −1…1,
+    Höhe Z 0…~1 (zackiger Grat, zu den Enden niedriger), Vorderseite −Y (Godot +Z, schaut hangabwärts) mit senkrechten
+    Rippen und Bändern/Gesimsen, Rückseite keilförmig (steckt im Hang). Grundriss linsenförmig: Enden laufen spitz aus.
+    Flächenfarbe: Rinnen dunkler, Gesimse heller, Granit mit Grasflecken auf Absätzen, Sandstein gebändert."""
+    r = random.Random(1000 + 10 * i + {"granit": 1, "kalk": 2, "sand": 3}[kind])
+    nx, nz = (14, 10) if detail else (6, 4)
+    base = {"granit": GRANIT, "kalk": KALK, "sand": SAND}[kind]
+    ribs = [r.uniform(0.0, 0.16) for _ in range(nx + 1)]
+    ledges = sorted(r.uniform(0.15, 0.85) for _ in range(3))
+    crest = [0.55 + 0.45 * r.random() ** 0.7 for _ in range(nx + 1)]  # zackig: Türme und Scharten
+    crest = [crest[0]] + [0.25 * crest[a - 1] + 0.5 * crest[a] + 0.25 * crest[a + 1] for a in range(1, nx)] + [crest[-1]]
+    if detail:  # ein, zwei Felstürme
+        for a in r.sample(range(2, nx - 1), 2):
+            crest[a] += r.uniform(0.15, 0.3)
+
+    def build(m):
+        F, B = [], []
+        for a in range(nx + 1):
+            x = -1 + 2 * a / nx
+            e = (1 - abs(x) ** 2.2) ** 0.5  # Linse: Dicke -> 0 an den Enden
+            top = crest[a] * (1 - 0.6 * abs(x) ** 2.5)
+            fr, bk = [], []
+            for k in range(nz + 1):
+                z = -0.15 + (top + 0.15) * k / nz
+                step = sum(0.05 for L in ledges if z > L)  # über jedem Gesims tritt die Wand etwas zurück
+                d = (0.14 + ribs[a] + 0.05 * math.sin(7 * z + a) + r.uniform(-0.03, 0.03) - step) * e
+                lean = 0.42 * max(z, 0)  # Wand neigt sich nach hinten (~75°) und läuft oben in den Hang
+                fy = -max(d, 0.03 * e) + lean
+                fr.append(Vector((x + r.uniform(-0.02, 0.02) * e, fy, z)))
+                bk.append(Vector((x, fy + (0.6 - 0.5 * min(max(z, 0), 1)) * e + 0.02, z)))
+            F.append(fr)
+            B.append(bk)
+
+        def col(pts):
+            A, Bv, C = pts[0], pts[1], pts[2]
+            n = (Bv - A).cross(C - A)
+            n = n.normalized() if n.length > 1e-9 else Vector((0, 0, 1))
+            zc = sum(p.z for p in pts) / len(pts)
+            c = (sand_bands(zc * 3) if kind == "sand" else base) * r.uniform(0.85, 1.1)
+            depth = -sum(p.y for p in pts) / len(pts)
+            c = c * (0.75 + 1.4 * min(depth, 0.25))  # Rinnen (wenig Tiefe) dunkler, Rippen heller
+            c = c * (0.75 + 0.25 * min(max(zc + 0.15, 0) / 0.6, 1))  # Fuß dunkler
+            if abs(n.z) > 0.6 and n.z > 0:  # Absatz: heller (Kalk/Sand) bzw. Grasfleck (Granit)
+                c = c.lerp(lin((.30, .36, .18)) if kind == "granit" else c * 1.25, 0.55)
+            return c
+
+        def quad(a, b, c, d, flip=False):
+            for t in ((a, b, c), (a, c, d)):
+                t = t[::-1] if flip else t
+                m._poly(list(t), col(t))
+
+        for a in range(nx):
+            for k in range(nz):
+                quad(F[a][k], F[a + 1][k], F[a + 1][k + 1], F[a][k + 1])  # Front (Normale -Y)
+                quad(B[a][k], B[a][k + 1], B[a + 1][k + 1], B[a + 1][k])  # Rückseite (+Y)
+            quad(F[a][nz], F[a + 1][nz], B[a + 1][nz], B[a][nz])  # Grat
+    return build
+
+
+for _k in ("granit", "kalk", "sand"):
+    for _i in range(2):
+        ROCKS[f"fels_wand_{_k}_{_i}"] = wand(_k, _i, True)
+        ROCKS[f"fels_wand_{_k}_{_i}_lod"] = wand(_k, _i, False)
+
 # --- Tiere ---
 
 

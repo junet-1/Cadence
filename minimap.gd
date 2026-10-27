@@ -2,6 +2,7 @@ extends "res://osm_view.gd"
 ## Minimap: wo man in echt wäre. +/- zoomt.
 
 const SIZE := 360.0
+const UI := preload("res://ui_theme.gd")
 
 var meta := {}
 var route := PackedVector2Array()  # Mercator 0..1, einmal berechnet
@@ -57,9 +58,11 @@ func _draw() -> void:
 	draw_tiles()
 	var step := maxi(1, route.size() / 2000)
 	var line := PackedVector2Array()
+	var wp := world_px()
 	for i in range(0, route.size(), step):
-		line.append(to_screen(route[i]))
-	draw_polyline(line, Color(1, 0.4, 0, 0.85), 4.0, true)
+		line.append(to_screen(route[i], wp))
+	draw_polyline(line, Color(0, 0, 0, 0.35), 7.0, true)
+	draw_polyline(line, UI.ACCENT, 4.0, true)
 
 	if peer_on:
 		draw_circle(to_screen(peer), 7, Color.WHITE)
@@ -68,6 +71,6 @@ func _draw() -> void:
 	var dir := (ahead - center).normalized()
 	var side := Vector2(-dir.y, dir.x)
 	draw_colored_polygon(PackedVector2Array([c + dir * 13, c - dir * 8 + side * 8, c - dir * 8 - side * 8]), Color.WHITE)
-	draw_colored_polygon(PackedVector2Array([c + dir * 10, c - dir * 6 + side * 6, c - dir * 6 - side * 6]), Color(1, 0.4, 0.1))
-	draw_string(ThemeDB.fallback_font, Vector2(size.x - 110, size.y - 6), "Zoom %d (+/-)" % zoom, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.2, 0.2, 0.2))
+	draw_colored_polygon(PackedVector2Array([c + dir * 10, c - dir * 6 + side * 6, c - dir * 6 - side * 6]), UI.ACCENT)
+	draw_string(get_theme_default_font(), Vector2(6, size.y - 6), "Zoom %d (+/−)" % zoom, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.2, 0.2, 0.2))
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.6), false, 2.0)

@@ -83,6 +83,11 @@ void sky() {
 		} else {
 			vec4 c = cloud_col(EYEDIR, s, POSITION, skyc);
 			col = mix(col, c.rgb, c.a);
+			// Umgebungslicht von unten = vom Boden zurückgeworfen (warmes Grau), nicht Himmelsblau: sonst sind Schatten und
+			// Wände türkis. Erst deutlich unter dem Horizont (Luftperspektive der Ferne liest die Cubemap fast waagrecht).
+			float day = smoothstep(-0.12, 0.1, s.y);
+			vec3 bounce = vec3(0.30, 0.28, 0.24) * mix(0.15, 1.0, day) * energy * (1.0 - 0.4 * smoothstep(0.6, 1.0, clouds.z));
+			col = mix(col, bounce, 1.0 - smoothstep(-0.3, -0.06, EYEDIR.y));
 		}
 		COLOR = col;
 	}

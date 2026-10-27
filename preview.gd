@@ -6,9 +6,11 @@ extends PanelContainer
 signal ride_requested
 
 const Main := preload("res://main.gd")
+const UI := preload("res://ui_theme.gd")
 const STEP := 5.0  # m zwischen Routenpunkten (route.py)
 
 var viewport := SubViewport.new()
+var view := TextureRect.new()  # zeigt viewport in Bildschirmpixeln (SubViewportContainer kennt nur ganzzahlige Stretch-Faktoren)
 var content: Node3D
 var cam := Camera3D.new()
 var marker := MeshInstance3D.new()
@@ -27,38 +29,60 @@ var dist := 3000.0
 
 func _ready() -> void:
 	visible = false
+	add_theme_stylebox_override("panel", UI.box(UI.PANEL_SOLID, 16, 14, UI.LINE))
 	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
 	add_child(box)
 	var bar := HBoxContainer.new()
+	bar.add_theme_constant_override("separation", 8)
 	box.add_child(bar)
-	title.size_flags_horizontal = SIZE_EXPAND_FILL
-	title.add_theme_font_size_override("font_size", 20)
-	bar.add_child(title)
+	var head := VBoxContainer.new()
+	head.size_flags_horizontal = SIZE_EXPAND_FILL
+	head.add_theme_constant_override("separation", 0)
+	bar.add_child(head)
+	title.add_theme_font_size_override("font_size", 24)
+	title.add_theme_font_override("font", UI.font(700))
+	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	head.add_child(title)
+	stats.add_theme_font_size_override("font_size", 16)
+	stats.add_theme_color_override("font_color", UI.MUTED)
+	stats.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	head.add_child(stats)
 	var fit := Button.new()
 	fit.text = "Einpassen"
+	fit.tooltip_text = "Kamera auf die ganze Strecke"
 	fit.pressed.connect(frame)
 	bar.add_child(fit)
 	exaggerate.text = "Höhe ×2"
+	exaggerate.tooltip_text = "Nur das 3D-Bild wird überhöht; Profil und Zahlen bleiben echt"
 	exaggerate.toggled.connect(func(_on: bool) -> void: _apply_scale())
 	bar.add_child(exaggerate)
-	var ride := Button.new()
+	var ride := UI.primary(Button.new())
 	ride.text = "Losfahren"
 	ride.pressed.connect(func() -> void: ride_requested.emit())
 	bar.add_child(ride)
 	var close := Button.new()
 	close.text = "✕"
+	close.tooltip_text = "Schließen (Esc)"
 	close.pressed.connect(hide)
 	bar.add_child(close)
-	box.add_child(stats)
+	for b in bar.get_children():
+		if b is Button:
+			b.size_flags_vertical = SIZE_SHRINK_CENTER
+			b.focus_mode = FOCUS_NONE  # Esc/Leertaste sollen nicht an einem Knopf hängen bleiben
 
-	var vc := SubViewportContainer.new()
-	vc.stretch = true
-	vc.size_flags_vertical = SIZE_EXPAND_FILL
-	vc.gui_input.connect(_view_input)
-	box.add_child(vc)
+	view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	view.stretch_mode = TextureRect.STRETCH_SCALE
+	view.size_flags_vertical = SIZE_EXPAND_FILL
+	view.mouse_filter = MOUSE_FILTER_STOP
+	view.gui_input.connect(_view_input)
+	view.resized.connect(_fit_viewport)
+	box.add_child(view)
 	viewport.own_world_3d = true
 	viewport.msaa_3d = Viewport.MSAA_4X
-	vc.add_child(viewport)
+	add_child(viewport)  # rendert nur, solange view die Textur zeichnet (UPDATE_WHEN_VISIBLE)
+	view.texture = viewport.get_texture()
+	get_viewport().size_changed.connect(_fit_viewport)
 	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
 	env.sky = Sky.new()
@@ -82,6 +106,30 @@ func _ready() -> void:
 	profile.custom_minimum_size.y = 150
 	profile.hovered.connect(_on_hover)
 	box.add_child(profile)
+	var legend := HBoxContainer.new()
+	legend.add_theme_constant_override("separation", 14)
+	legend.add_child(UI.label("Steigung", 14, UI.MUTED, 600))
+	for i in Profile.BANDS.size():
+		var sw := ColorRect.new()
+		sw.color = Profile.BANDS[i][1]
+		sw.custom_minimum_size = Vector2(14, 14)
+		sw.size_flags_vertical = SIZE_SHRINK_CENTER
+		var item := HBoxContainer.new()
+		item.add_theme_constant_override("separation", 5)
+		item.add_child(sw)
+		item.add_child(UI.label(Profile.band_name(i), 14, UI.MUTED))
+		legend.add_child(item)
+	var hint := UI.label("Ziehen: drehen · Rechts ziehen: schieben · Rad: Zoom · Esc: schließen", 14, UI.MUTED)
+	hint.size_flags_horizontal = SIZE_EXPAND_FILL
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	legend.add_child(hint)
+	box.add_child(legend)
+
+
+func _fit_viewport() -> void:
+	## 3D-Bild in echter Bildschirmauflösung rendern (Stretch-Faktor 1.2–2.4), nicht hochskaliert
+	if view.is_inside_tree():
+		viewport.size = Vector2i((view.size * (get_viewport().get_final_transform() * view.get_global_transform_with_canvas()).get_scale().x).round().max(Vector2(2, 2)))
 
 
 func show_route(dir: String, name: String) -> bool:
@@ -285,19 +333,28 @@ class Profile extends Control:
 	func _y(v: float) -> float:
 		return 6.0 + (1.0 - (v - hmin) / (hmax - hmin)) * (size.y - BOTTOM - 12.0)
 
+	# Steigungsbänder [bis %, Farbe] – Profil und Legende lesen dieselbe Tabelle
+	const BANDS := [[-2.0, Color(0.35, 0.55, 0.85)], [2.0, Color(0.55, 0.75, 0.45)], [4.0, Color(0.85, 0.85, 0.3)],
+		[6.0, Color(0.95, 0.65, 0.2)], [9.0, Color(0.9, 0.3, 0.15)], [INF, Color(0.55, 0.08, 0.1)]]
+
 	static func band(g: float) -> Color:
-		if g < -2.0:
-			return Color(0.35, 0.55, 0.85)
-		for step in [[2.0, Color(0.55, 0.75, 0.45)], [4.0, Color(0.85, 0.85, 0.3)], [6.0, Color(0.95, 0.65, 0.2)], [9.0, Color(0.9, 0.3, 0.15)]]:
-			if g < step[0]:
-				return step[1]
-		return Color(0.55, 0.08, 0.1)
+		for b in BANDS:
+			if g < b[0]:
+				return b[1]
+		return BANDS[-1][1]
+
+	static func band_name(i: int) -> String:
+		if i == 0:
+			return "< %d %%" % BANDS[0][0]
+		if i == BANDS.size() - 1:
+			return "> %d %%" % BANDS[i - 1][0]
+		return "%d–%d %%" % [BANDS[i - 1][0], BANDS[i][0]]
 
 	func _draw() -> void:
-		draw_rect(Rect2(Vector2.ZERO, size), Color(0.1, 0.1, 0.12, 0.9))
+		draw_style_box(UI.box(Color(0, 0, 0, 0.25), 10, 0), Rect2(Vector2.ZERO, size))
 		if h.size() < 2:
 			return
-		var font := ThemeDB.fallback_font
+		var font := get_theme_default_font()
 		var base := size.y - BOTTOM
 		var segs := mini(h.size() - 1, int(size.x - LEFT))
 		for s in segs:

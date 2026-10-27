@@ -64,5 +64,35 @@ func _init() -> void:
 	assert(watts == 1800)
 	var st2: Dictionary = L.stats(250.0, {"name": "Rampentest", "segments": []})
 	assert(is_equal_approx(st2.ftp_guess, 300.0 * 0.75) and st2.ftp_basis.begins_with("Rampentest"))
+	# Konfiguration: cadence.cfg (alte Installationen: kurbel.cfg) wird gefunden
+	assert(Main.config().get_value("rider", "ftp", -1.0) > 0.0)
+	# Workout-Leiste: Farbe = Leistungszone des mittleren Ziels, frei = grau
+	const Bar := preload("res://workout_bar.gd")
+	assert(Bar.color(1.2, 1.2, false) == preload("res://ui_theme.gd").zone(1.2)[2] and Bar.color(0.0, 0.0, true) == Bar.FREE)
+	# Geräusche: alle Klänge synthetisiert und hörbar; Freilauf bei 30 km/h ≈ 4 Radumdrehungen/s × 24 Klinken ≈ 95 Klicks/s
+	const Snd := preload("res://sound.gd")
+	var t0 := Time.get_ticks_msec()
+	var snd: Dictionary = Snd.make()
+	print("Klänge in %d ms" % (Time.get_ticks_msec() - t0))
+	for n in Snd.LOOPS:
+		var wav: AudioStreamWAV = snd[n]
+		assert(wav.loop_mode == AudioStreamWAV.LOOP_FORWARD and wav.data.size() > Snd.RATE)
+	assert(snd.calls.size() == 8 and snd.owl.size() == 1)
+	assert(absf(Snd.free_pitch(30.0 / 3.6) * Snd.CLICKS - 95.2) < 1.0)
+	# Tageszeit der Fahrt: Mittag = Sonne am höchsten, Abendsonne ~6° über dem Horizont, Nacht unter dem Horizont
+	var m: Node = Main.new()
+	m.geo = Vector2(10.0, 50.0)
+	m._set_clock(12.0)
+	var noon: float = m.sun_dir().y
+	for h in [8.0, 15.5]:
+		m._set_clock(h)
+		assert(m.sun_dir().y < noon)
+	m._set_clock(-2.0)
+	assert(absf(rad_to_deg(asin(m.sun_dir().y)) - 6.0) < 1.0)
+	m._set_clock(0.0)
+	assert(m.sun_dir().y < 0.0)
+	for n: Node in [m.weather, m.sound, m.dev, m.minimap]:  # Felder ohne Eltern mit aufräumen
+		n.free()
+	m.free()
 	print("ok")
 	quit()

@@ -17,7 +17,7 @@ from scipy import ndimage
 CACHE = Path.home() / ".cache" / "kurbel" / "worldcover"
 WC_URL = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{}_Map.tif"
 WC_LEVEL = 1  # Übersicht 1 = 1/6000° ≈ 18 m, passt zum 20-m-Geländeraster
-UA = {"User-Agent": "kurbel/0.1 (private cycling sim)"}
+UA = {"User-Agent": "cadence/0.1 (private cycling sim)"}
 
 # Landklassen (0–5 wie früher in route.py, damit alte Logik/Pakete passen)
 OPEN, FARM, MEADOW, FOREST, URBAN, WATER, SCRUB, SAND, ROCK, SNOW, WETLAND, PAVING = range(12)

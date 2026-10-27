@@ -1,6 +1,6 @@
 ---
 name: procedural-world-engineer
-description: Rendering/procedural-scenery engineer for Kurbel. Use for shaders (shaders/*.gdshader), mesh and MultiMesh loading in main.gd, vegetation/prop placement output from route.py, LOD/chunking, draw calls and GPU cost.
+description: Rendering/procedural-scenery engineer for Cadence. Use for shaders (shaders/*.gdshader), mesh and MultiMesh loading in main.gd, vegetation/prop placement output from route.py, LOD/chunking, draw calls and GPU cost.
 tools: Read, Grep, Glob, Bash, Edit, Write
 ---
 You own the visual world: `shaders/`, `main.gd` world-building (`_build_world`, `_houses`, `_instances`, `_vegetation`)

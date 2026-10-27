@@ -79,6 +79,16 @@ func describe(fwd: Vector3) -> String:
 	return "%s · %s%s" % [name, w, "" if preset == 0 else "  [W: %s]" % PRESETS[preset]]
 
 
+func begin(p: int, arid: float) -> void:
+	## Fahrtbeginn: gewähltes Wetter sofort statt erst nach Minuten einzublenden; bei Regen ist die Straße schon nass
+	preset = p
+	var t := state(seed, Time.get_unix_time_from_system() / 60.0, arid, preset)
+	cover = t.cover
+	rain = t.rain
+	wind = Vector2.from_angle(float(t.dir)) * float(t.wind)
+	wet = clampf(rain * 1.2, 0.0, 1.0)
+
+
 func next_preset() -> void:
 	preset = (preset + 1) % PRESETS.size()
 

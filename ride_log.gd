@@ -186,7 +186,10 @@ func save(name: String, stats_: Dictionary) -> String:
 	var local := int(start_unix) + int(Time.get_time_zone_from_system().get("bias", 0)) * 60  # Dateiname in Ortszeit
 	var stamp := Time.get_datetime_string_from_unix_time(local).left(16).replace(":", "-").replace("T", "_")
 	var re := RegEx.create_from_string("[^A-Za-z0-9-]+")
-	var base := "user://rides/%s_%s" % [stamp, re.sub(name, "_", true).strip_edges().trim_suffix("_").left(40)]
+	var ascii := name
+	for k in [["ä", "ae"], ["ö", "oe"], ["ü", "ue"], ["Ä", "Ae"], ["Ö", "Oe"], ["Ü", "Ue"], ["ß", "ss"], ["×", "x"], ["ø", "o"], ["é", "e"]]:
+		ascii = ascii.replace(k[0], k[1])  # „Wüste“ -> Wueste statt W_ste
+	var base := "user://rides/%s_%s" % [stamp, re.sub(ascii, "_", true).strip_edges().trim_suffix("_").left(40)]
 	var f := FileAccess.open(base + ".tcx", FileAccess.WRITE)
 	if f == null:
 		return ""

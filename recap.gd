@@ -1,6 +1,7 @@
 extends Control
 ## Zusammenfassung am Workout-Ende und beim Beenden: Kennzahlen, Leistungskurve (Zonenfarben) mit Ziel und Puls, Bestwerte,
 ## Min/Max, Zeit in Zonen, Intervalle Soll/Ist, Speicherort der TCX-Datei. closed(finish): true = Fahrt beenden.
+## Die Knöpfe stehen in einer festen Fußzeile (nicht im Scrollbereich), damit sie bei jeder Fenstergröße sichtbar sind.
 
 signal closed(finish: bool)
 
@@ -30,9 +31,13 @@ func open(ride_log: RefCounted, stats: Dictionary, title: String, subtitle: Stri
 	panel.offset_top = 40
 	panel.offset_bottom = -40
 	add_child(panel)
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 16)
+	panel.add_child(outer)
 	var scroll := ScrollContainer.new()  # kleine Fenster: scrollen statt abschneiden
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	panel.add_child(scroll)
+	scroll.size_flags_vertical = SIZE_EXPAND_FILL
+	outer.add_child(scroll)
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 16)
 	col.size_flags_horizontal = SIZE_EXPAND_FILL
@@ -47,7 +52,7 @@ func open(ride_log: RefCounted, stats: Dictionary, title: String, subtitle: Stri
 	titles.add_child(UI.label(subtitle, 20, UI.MUTED))
 	if s.get("n", 0) == 0:
 		col.add_child(UI.label("Keine Daten aufgezeichnet – erst treten, dann gibt es eine Auswertung.", 22, UI.MUTED))
-		col.add_child(_buttons(path, can_continue))
+		outer.add_child(_buttons(path, can_continue))
 		return
 
 	var tiles := GridContainer.new()
@@ -59,7 +64,7 @@ func open(ride_log: RefCounted, stats: Dictionary, title: String, subtitle: Stri
 			["Normalized Power", "%d" % roundi(s.np), "W", UI.zone(s.np / ftp)[2]],
 			["FTP-Schätzung", "%d" % roundi(s.ftp_guess) if s.ftp_guess > 0 else "–", "W", UI.ACCENT],
 			["Ø Trittfrequenz", "%d" % roundi(s.cad_avg), "rpm", UI.TEXT],
-			["Ø Puls", "%d" % roundi(s.hr_avg) if s.hr_avg > 0 else "–", "bpm", UI.BAD],
+			["Ø Puls", "%d" % roundi(s.hr_avg) if s.hr_avg > 0 else "–", "bpm", UI.BAD if s.hr_avg > 0 else UI.MUTED],
 			["Strecke", "%.1f" % (s.distance / 1000.0), "km", UI.TEXT],
 			["Höhenmeter", "%d" % roundi(s.ascent), "m", UI.TEXT],
 			["Belastung", "%d" % roundi(s.tss), "TSS", UI.TEXT]]:
@@ -104,7 +109,7 @@ func open(ride_log: RefCounted, stats: Dictionary, title: String, subtitle: Stri
 		shown += 1
 	if s.intervals.is_empty():
 		iv.add_child(UI.label("Freie Fahrt – keine Zielvorgaben.", 17, UI.MUTED))
-	col.add_child(_buttons(path, can_continue))
+	outer.add_child(_buttons(path, can_continue))
 
 
 func _tile(name: String, value: String, unit: String, color: Color) -> Control:
@@ -219,17 +224,12 @@ func _buttons(path: String, can_continue: bool) -> Control:
 		open_dir.text = "Ordner öffnen"
 		open_dir.pressed.connect(func() -> void: OS.shell_open(path.get_base_dir()))
 		h.add_child(open_dir)
-	if can_continue:
-		var cont := Button.new()
-		cont.text = "Weiterfahren"
-		cont.pressed.connect(func() -> void: closed.emit(false))
-		h.add_child(cont)
-	var done := Button.new()
+	var cont := Button.new()  # Esc macht dasselbe; nochmal Beenden speichert die Datei neu (gleicher Name, mehr Daten)
+	cont.text = "Weiterfahren" if can_continue else "Zurück zur Fahrt"
+	cont.pressed.connect(func() -> void: closed.emit(false))
+	h.add_child(cont)
+	var done := UI.primary(Button.new(), 18)
 	done.text = "Fahrt beenden"
-	done.add_theme_stylebox_override("normal", UI.box(UI.ACCENT, 10, 10))
-	done.add_theme_stylebox_override("hover", UI.box(UI.ACCENT.lightened(0.15), 10, 10))
-	done.add_theme_color_override("font_color", Color.BLACK)
-	done.add_theme_color_override("font_hover_color", Color.BLACK)
 	done.pressed.connect(func() -> void: closed.emit(true))
 	h.add_child(done)
 	done.call_deferred("grab_focus")

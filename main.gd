@@ -1,5 +1,5 @@
 extends Node3D
-## Kurbel: Rad-Sim. Watt vom Kickr -> Tempo auf der Strecke, Steigung -> zurück an den Kickr.
+## Cadence: Rad-Sim. Watt vom Kickr -> Tempo auf der Strecke, Steigung -> zurück an den Kickr.
 
 const GAME_PORT := 47800
 const BRIDGE_PORT := 47801
@@ -7,11 +7,14 @@ const G := 9.81
 const CRR := 0.004
 const CDA := 0.32  # m², Oberlenker
 const RHO := 1.2
+const SENSOR_TIMEOUT := 3.0  # s ohne Messwerte vom Trainer -> Leistung/Trittfrequenz 0 (sonst fährt der letzte Wert ewig weiter)
+const Options := preload("res://options.gd")
 const ZONE_NAMES := {"warmup": "Einfahren", "endurance": "Grundlage", "tempo": "Tempo", "threshold": "Schwelle", "vo2": "VO2max",
 	"recovery": "Erholung", "cooldown": "Ausfahren", "free": "Frei"}
 
-var cfg := ConfigFile.new()
+var cfg := config()
 var bridge := PacketPeerUDP.new()
+var trainer_owner := false  # nur die Instanz, die GAME_PORT besitzt (und kein automatischer Test), steuert den Trainer
 var net := PacketPeerUDP.new()
 var curve := Curve3D.new()
 var route_len := 0.0
@@ -26,12 +29,15 @@ var gear := 0
 var elapsed := 0.0
 var status := ""
 var send_timer := 0.0
+var data_t := -100.0  # Zeitpunkt der letzten Messwerte vom Trainer (s seit Start)
+var sensor_lost := true  # noch keine/keine frischen Messwerte; einmalig genullt, damit Werte per Skript gesetzt werden können
 
 var peer_name := ""
 var peer_dist := 0.0
 var peer_seen := -100.0
 
 var peer_cadence := 0.0
+var peer_speed := 0.0  # m/s, aus aufeinanderfolgenden Paketen geschätzt (nur für die Räder des Kollegen)
 
 var rider: Node3D
 var ghost: Node3D
@@ -40,6 +46,7 @@ var ui_layer: CanvasLayer
 var ride_log := preload("res://ride_log.gd").new()  # 1 Probe/s -> Zusammenfassung + TCX
 var recap: Control
 var recap_shown := false  # Zusammenfassung am Workout-Ende schon gezeigt
+var recap_auto := false  # offene Auswertung kam automatisch am Workout-Ende: Fahrt und Aufzeichnung laufen weiter
 var dev := preload("res://dev.gd").new()  # F1: Freiflug-Kamera (nur Ansicht)
 var env: Environment
 var sun: DirectionalLight3D
@@ -57,11 +64,16 @@ var snow_y := 1e5  # aktuelle Schneegrenze (Welt-y): Niederschlag darüber als S
 var warmth := 0.0  # 0 kühl … 1 heiß-trocken: Hitzeflimmern, Wasserfarbe
 var leaf_pts := {}  # Kachel/Chunk -> [Mitte (Vector2), Kronenpunkte (PackedVector3Array)] von Laubbäumen: dort fallen Blätter
 var leaf_t := 0.0
+var leaf_tex: Texture2D
+var tree_pts := {}  # Kachel/Chunk -> Fußpunkte (x, z) aller Bäume: Waldgeräusche (sound.gd)
+var sound := preload("res://sound.gd").new()  # Wind, Reifen, Freilauf, Regen, Vögel (nur Kulisse)
 const LEAF_CROWN := {"buche": 12.0, "eiche": 9.0, "birke": 10.0}  # Kronenmitte über dem Fuß (m, × Baumskalierung)
 # Baum- und Buscharten (blender/trees.py -> models/trees.glb); Wiegen im Wind je Art (sonst 1)
-const TREES := ["buche", "eiche", "birke", "fichte", "kiefer", "olive", "pinie", "aleppo", "steineiche", "zypresse", "palme", "busch"]
-const SWAY := {"palme": 1.5, "busch": 0.0, "zypresse": 0.5}
-const TREE_DETAIL := 200.0  # m: bis hier das Detailmodell, dahinter die Fernversion
+const TREES := ["buche", "eiche", "birke", "fichte", "kiefer", "olive", "pinie", "aleppo", "steineiche", "zypresse", "palme", "busch",
+	"farn", "hochgras", "staude"]
+const SWAY := {"palme": 1.5, "busch": 0.0, "zypresse": 0.5, "farn": 3.0, "hochgras": 6.0, "staude": 5.0}
+const UNDER := {"farn": 160.0, "hochgras": 160.0, "staude": 200.0}  # Unterwuchs (world._plants): sichtbar bis, Detail bis 120 m
+const TREE_DETAIL := 600.0  # m: bis hier das Detailmodell (Blattkarten), dahinter die Fernversion
 var autumn := 1.0
 var minimap := preload("res://minimap.gd").new()
 var grass: Array[MultiMeshInstance3D] = []
@@ -81,16 +93,20 @@ var region_t := 0.0
 
 
 func _ready() -> void:
-	cfg.load("res://kurbel.cfg")
-	bridge.bind(GAME_PORT, "127.0.0.1")
+	# Zweite Instanz (Port belegt) oder MCP-Test: nie an die Bridge senden, sonst steuern zwei Spiele denselben Trainer
+	trainer_owner = bridge.bind(GAME_PORT, "127.0.0.1") == OK and OS.get_environment("MCP_BACKGROUND") != "1"
 	bridge.set_dest_address("127.0.0.1", BRIDGE_PORT)
 	var port: int = cfg.get_value("net", "port", 47810)
 	net.bind(port)
 	var peer: String = cfg.get_value("net", "peer_host", "")
 	if peer != "":
 		net.set_dest_address(peer, port)
-	_start_bridge()
+	if trainer_owner:
+		_start_bridge()
+	else:
+		status = "Trainer wird von einer anderen Cadence-Instanz gesteuert – hier nur Zuschauen"
 	ftp = cfg.get_value("rider", "ftp", 250.0)
+	cfg.set_value("world", "grass", Options.load_cfg().get_value("video", "grass", cfg.get_value("world", "grass", 220)))  # Einstellungen
 	if Engine.has_meta("world"):
 		_start_world(Engine.get_meta("world"))
 	else:
@@ -98,15 +114,15 @@ func _ready() -> void:
 
 
 func _start_bridge() -> void:
-	var args := ["run", ProjectSettings.globalize_path("res://bridge.py")]
-	if "--fake" in OS.get_cmdline_user_args():
+	var args := ["run", ProjectSettings.globalize_path(data("res://bridge.py"))]
+	if "--fake" in OS.get_cmdline_user_args() or OS.get_environment("MCP_BACKGROUND") == "1":  # automatische Tests nie an den echten Trainer
 		args.append("--fake")
 	if OS.create_process(uv(), args) == -1:
 		status = "uv nicht gefunden – starte bridge.py manuell"
 
 
 func _build_world() -> void:
-	var dir := "res://routes/%s/" % Engine.get_meta("route", cfg.get_value("route", "name", "taunus"))
+	var dir := data("res://routes/%s/" % Engine.get_meta("route", cfg.get_value("route", "name", "taunus")))
 	var pts := FileAccess.get_file_as_bytes(dir + "route.pos").to_vector3_array()
 	if pts.is_empty():
 		status = "Strecke fehlt: %s – erst route.py laufen lassen" % dir
@@ -115,6 +131,8 @@ func _build_world() -> void:
 	if meta is not Dictionary:
 		meta = {}
 	_setup_route(meta, pts)
+	if climate.has("elev0"):  # echte Höhe ü. M. für HUD und TCX (alte Pakete ohne Klima: nur relative Höhe)
+		world_meta = {"elev0": climate.elev0}
 
 	var terrain := _shader("terrain")
 	var ground_tex := load_ground(dir)
@@ -124,8 +142,8 @@ func _build_world() -> void:
 	terrain.set_shader_parameter("rect", Vector4(g[0], g[1], g[2], g[3]))
 	_load_mesh(dir + "terrain", terrain)
 	var road := _shader("road")
-	_load_mesh(dir + "road", road)
-	_load_mesh(dir + "streets", road)
+	_load_mesh(dir + "road", road, false)  # Fahrbahnen werfen keinen Schatten (Streifen an der Kante bei tiefer Sonne)
+	_load_mesh(dir + "streets", road, false)
 	_load_mesh(dir + "structures", road)  # Brücken (Deck, Brüstung, Pfeiler) und Tunnelgalerien aus road.py, Alpha 0 = ohne Markierung
 	var paint := StandardMaterial3D.new()  # Querstriche (signs.py): Haltlinien, Wartelinien, Zebrastreifen
 	paint.vertex_color_use_as_albedo = true
@@ -162,6 +180,7 @@ func _setup_route(meta: Dictionary, pts: PackedVector3Array) -> void:
 	RenderingServer.global_shader_parameter_set("snow_line", snow_y)
 	autumn = _autumn()
 	weather.seed = int(meta.get("seed", hash(str(meta.get("name", "")))))  # gleicher Seed + gleiche Uhrzeit = gleiches Wetter
+	_set_clock(Engine.get_meta("ride", {}).get("time", -1.0))
 
 
 func _start_world(opts: Dictionary) -> void:
@@ -173,9 +192,7 @@ func _start_world(opts: Dictionary) -> void:
 	world.start(opts)
 	erg = opts.get("mode", "erg") == "erg"
 	ftp = opts.get("ftp", ftp)
-	cfg.set_value("world", "grass", opts.get("grass", cfg.get_value("world", "grass", 220)))  # nur für diese Fahrt
 	_make_ui()
-	ui.show_loading("Startet den Generator …")
 
 
 func _on_world_meta(meta: Dictionary, pts: PackedVector3Array) -> void:
@@ -231,11 +248,12 @@ func _setup_scene() -> void:
 	add_child(moon)
 
 	rider = _make_rider(Color(1, 0.45, 0.1), cfg.get_value("rider", "name", "Ich"))
-	ghost = _make_rider(Color(0.2, 0.5, 1), "")
+	ghost = _make_rider(Color(0.2, 0.5, 1), "")  # Kollege (UDP)
+	rider.get_node("Tag").visible = false  # eigener Name stünde mitten im Blick; der Text geht weiter an den Kollegen
 	ghost.visible = false
 	var cam := Camera3D.new()
-	cam.position = Vector3(0, 2.6, 6.5)
-	cam.rotation_degrees.x = -12
+	cam.position = Vector3(0, 2.1, 4.6)
+	cam.rotation_degrees.x = -7  # Fahrer knapp unter der Bildmitte, Straße und Horizont voraus sichtbar
 	cam.far = 8000
 	rider.add_child(cam)
 	headlight = SpotLight3D.new()
@@ -247,6 +265,9 @@ func _setup_scene() -> void:
 	rider.add_child(headlight)
 	add_child(weather)
 	add_child(weather.make_fx())
+	weather.begin(Engine.get_meta("ride", {}).get("weather", 0), climate.get("arid", 0.0))
+	sound.main = self
+	add_child(sound)
 	# Hitzeflimmern: Vollbild-Quad an der Kamera (nie weggeschnitten), nur sichtbar wenn es heiß ist
 	heat_quad = MeshInstance3D.new()
 	var q := QuadMesh.new()
@@ -271,6 +292,7 @@ func _setup_scene() -> void:
 	ui.setup(self)
 	add_child(dev)
 	dev.setup(self)
+	apply_settings(Options.load_cfg())
 
 
 func _make_ui() -> void:
@@ -290,10 +312,11 @@ func _finish(at_end := false) -> void:
 	## Auswertung: Kennzahlen, TCX speichern, Zusammenfassung zeigen. at_end = Workout gerade fertig (Weiterfahren möglich).
 	if recap:
 		return
-	var name: String = world_meta.get("name", "Kurbel-Fahrt") if world else cfg.get_value("route", "name", "Kurbel-Fahrt")
+	var name: String = world_meta.get("name", "Cadence-Fahrt") if world else cfg.get_value("route", "name", "Cadence-Fahrt")
 	var st: Dictionary = ride_log.stats(ftp, workout)
 	var path: String = ride_log.save(name, st)
 	recap = preload("res://recap.gd").new()
+	recap_auto = at_end
 	ui_layer.add_child(recap)
 	var when := Time.get_datetime_string_from_system(false, true).left(16)
 	recap.open(ride_log, st, "Workout geschafft!" if at_end else "Deine Fahrt", "%s · %s" % [name, when], path, at_end)
@@ -301,6 +324,8 @@ func _finish(at_end := false) -> void:
 		recap.queue_free()
 		recap = null
 		if finish:
+			if recap_auto:  # nach der Auswertung am Workout-Ende weitergefahren: mit allen Daten neu speichern (gleicher Name)
+				ride_log.save(name, ride_log.stats(ftp, workout))
 			_leave())
 
 
@@ -359,6 +384,7 @@ func _vegetation(dir: String, meta: Dictionary, ground: Texture2D) -> void:
 
 func _grass(side: int) -> void:
 	# Gras + Blumen als zwei MultiMeshes, Position rechnet der Shader; sichtbar erst mit Karten (set_grass)
+	RenderingServer.global_shader_parameter_set("grass_r", side * 0.4 * 0.5)  # terrain.gdshader dunkelt den Boden darunter ab
 	for flowers in [false, true]:
 		var spacing := 0.9 if flowers else 0.4
 		var n := int(side * 0.4 / spacing) if flowers else side  # gleicher Radius für beide
@@ -398,48 +424,114 @@ func set_grass(ground: Texture2D, heights: Texture2D, rect: Vector4, grid: Vecto
 
 
 func _grass_mesh() -> ArrayMesh:
-	# 6 dünne, nach außen gebogene Halme unterschiedlicher Höhe; UV.y = Höhe 0..1 (Wind wirkt oben stärker)
+	# Grasbüschel: 12 schmale, gebogene Halme (je 3 Abschnitte, spitz), unterschiedlich hoch und geneigt. UV.y = Höhe 0..1
+	# (Wind, dunkler Fuß), COLOR.r = Helligkeit, COLOR.g = Vergilbung je Halm, Normale = Halmfläche (grass.gdshader mischt sie
+	# mit "oben") -> Licht und Schatten innerhalb des Büschels statt einer flachen Farbe
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
-	for k in 6:
-		var r := Basis(Vector3.UP, k * TAU / 6.0 + rng.randf() * 0.5)
-		var hgt := rng.randf_range(0.3, 0.6)
-		var w := 0.025
-		var lean := rng.randf_range(0.06, 0.18)
-		var off := Vector3(rng.randf_range(-0.08, 0.08), 0, rng.randf_range(-0.08, 0.08))
-		var pts := [Vector3(-w, 0, 0), Vector3(w, 0, 0), Vector3(-w * 0.7, hgt * 0.5, lean * 0.3), Vector3(w * 0.7, hgt * 0.5, lean * 0.3), Vector3(0, hgt, lean)]
-		for i in [0, 1, 2, 1, 3, 2, 2, 3, 4]:
-			st.set_uv(Vector2(0, pts[i].y / 0.6))
-			st.set_color(Color(1, 1, 1, 0))
-			st.add_vertex(r * pts[i] + off)
+	for k in 12:
+		var r := Basis(Vector3.UP, k * TAU / 12.0 + rng.randf() * 0.6)
+		var hgt := rng.randf_range(0.22, 0.62)
+		var w := rng.randf_range(0.009, 0.016)
+		var lean := rng.randf_range(0.05, 0.25) * hgt
+		var off := Vector3(rng.randf_range(-0.15, 0.15), 0, rng.randf_range(-0.15, 0.15))
+		var col := Color(rng.randf_range(0.75, 1.15), rng.randf() * rng.randf(), 0, 0)
+		var rows := []  # (links, rechts) je Höhe; Biegung wächst quadratisch nach oben
+		for i in 4:
+			var u := i / 3.0
+			var c := Vector3(0, hgt * u, lean * u * u)
+			var ww := w * (1.0 - u * 0.85) if i < 3 else 0.0
+			rows.append([c + Vector3(-ww, 0, 0), c + Vector3(ww, 0, 0)])
+		var n := (r * Vector3(0, 0.35, -1)).normalized()
+		for i in 3:
+			var a: Array = rows[i]
+			var b: Array = rows[i + 1]
+			var tri := [a[0], a[1], b[1], a[0], b[1], b[0]] if i < 2 else [a[0], a[1], b[0]]
+			for p: Vector3 in tri:
+				st.set_uv(Vector2(0, p.y / 0.62))
+				st.set_color(col)
+				st.set_normal(n)
+				st.add_vertex(r * p + off)
+	st.index()  # gemeinsame Vertices: der Gras-Vertexshader (Höhenkarte, Boden, Wind) läuft ~50k × je Vertex
 	return st.commit()
 
 
 func _flower_mesh() -> ArrayMesh:
-	# Stiel (2 gekreuzte Streifen, Alpha 0) + Blüte (2 senkrechte + 1 waagrechte Fläche, Alpha 1 = Blütenfarbe)
+	# Wildblume: Stiel (2 gekreuzte Streifen) mit zwei Blättern (COLOR.a 0), Blüte aus 5 schräg aufgestellten Blütenblättern
+	# (COLOR.a 1 = Blütenfarbe) um eine kleine Mitte (COLOR.a 0,5). Die Blüte nickt leicht zur Seite.
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var top := 0.42
-	var quads := []
+	var top := Vector3(0.03, 0.4, 0.0)
+	var tris := []  # [p0, p1, p2, alpha]
 	for k in 2:
 		var r := Basis(Vector3.UP, k * PI / 2.0)
-		quads.append([r * Vector3(-0.012, 0, 0), r * Vector3(0.012, 0, 0), r * Vector3(0.012, 0.36, 0), r * Vector3(-0.012, 0.36, 0), 0.0])
-		quads.append([r * Vector3(-0.08, 0.32, 0), r * Vector3(0.08, 0.32, 0), r * Vector3(0.08, top, 0), r * Vector3(-0.08, top, 0), 1.0])
-	quads.append([Vector3(-0.1, 0.38, -0.1), Vector3(0.1, 0.38, -0.1), Vector3(0.1, 0.38, 0.1), Vector3(-0.1, 0.38, 0.1), 1.0])
-	for q in quads:
-		for i in [0, 1, 2, 0, 2, 3]:
-			st.set_uv(Vector2(0, q[i].y / top))
-			st.set_color(Color(1, 1, 1, q[4]))
-			st.add_vertex(q[i])
+		var s0 := r * Vector3(-0.006, 0, 0)
+		var s1 := r * Vector3(0.006, 0, 0)
+		tris.append([s0, s1, top + r * Vector3(0.003, 0, 0), 0.0])
+		tris.append([s0, top + r * Vector3(0.003, 0, 0), top + r * Vector3(-0.003, 0, 0), 0.0])
+	for k in 2:  # Blätter am Stiel
+		var d := Vector3(cos(k * PI + 0.5), 0.6, sin(k * PI + 0.5)).normalized()
+		var b := Vector3(0, 0.1 + 0.08 * k, 0)
+		var side := d.cross(Vector3.UP).normalized() * 0.02
+		tris.append([b, b + d * 0.06 + side, b + d * 0.13, 0.0])
+		tris.append([b, b + d * 0.13, b + d * 0.06 - side, 0.0])
+	var up := Vector3(0.25, 1, 0).normalized()  # Blüte nickt
+	var ax := up.cross(Vector3(0, 0, 1)).normalized()
+	var ay := up.cross(ax)
+	for k in 5:
+		var a0 := k * TAU / 5.0
+		var dir := (ax * cos(a0) + ay * sin(a0)) + up * 0.45  # Blütenblätter schräg nach oben (Kelch)
+		var sd := (ax * cos(a0 + PI / 2) + ay * sin(a0 + PI / 2)) * 0.022
+		var c := top + up * 0.005
+		tris.append([c + sd * 0.4, c + dir * 0.05 + sd, c + dir * 0.06, 1.0])
+		tris.append([c - sd * 0.4, c + dir * 0.06, c + dir * 0.05 - sd, 1.0])
+		tris.append([top + up * 0.012, top + up * 0.012 + (ax * cos(a0) + ay * sin(a0)) * 0.014, top + up * 0.012 + (ax * cos(a0 + TAU / 5) + ay * sin(a0 + TAU / 5)) * 0.014, 0.5])
+	for t in tris:
+		var n: Vector3 = (t[1] - t[0]).cross(t[2] - t[0]).normalized()
+		for i in 3:
+			st.set_uv(Vector2(0, (t[i] as Vector3).y / 0.42))
+			st.set_color(Color(1, 0, 0, t[3]))
+			st.set_normal(n if n.y > 0.0 else -n)
+			st.add_vertex(t[i])
 	return st.commit()
 
 
 func _shader(name: String) -> ShaderMaterial:
 	var m := ShaderMaterial.new()
 	m.shader = load("res://shaders/%s.gdshader" % name)
+	if name == "props":
+		m.set_shader_parameter("leaves", leaf_atlas())
 	return m
+
+
+func leaf_atlas() -> Texture2D:
+	## Blatt-Atlas für die Blattkarten (blender/trees.py schreibt ihn neben trees.glb): wie die Modelle zur Laufzeit von der
+	## Platte, Mipmaps selbst. Fehlt er, bleibt der Shader-Standard (weiß, deckend) – dann nur mit alter trees.glb sinnvoll.
+	if leaf_tex == null:
+		var img := Image.load_from_file(ProjectSettings.globalize_path(data("res://models/leaves.png")))
+		if img:
+			img.generate_mipmaps()
+			leaf_tex = ImageTexture.create_from_image(img)
+	return leaf_tex
+
+
+static func config() -> ConfigFile:
+	## cadence.cfg; ältere Installationen haben noch kurbel.cfg (vor der Umbenennung) -> die gilt dann weiter
+	var c := ConfigFile.new()
+	if c.load(data("res://cadence.cfg")) != OK:
+		c.load(data("res://kurbel.cfg"))
+	elif FileAccess.file_exists(data("res://kurbel.cfg")):
+		push_warning("cadence.cfg gilt, kurbel.cfg wird ignoriert – eigene Werte (difficulty, mass, peer_host …) bitte übertragen")
+	return c
+
+
+static func data(p: String) -> String:
+	## Dateien auf der Platte (Python, routes/, models/, workouts/, cadence.cfg): im Editor res://, im Export neben der ausführbaren Datei
+	if OS.has_feature("template"):
+		return OS.get_executable_path().get_base_dir().path_join(p.trim_prefix("res://"))
+	return p
 
 
 static func uv() -> String:
@@ -503,13 +595,15 @@ static func read_mesh_arrays(base: String) -> Array:
 	return [arrays, flags]
 
 
-func _load_mesh(base: String, mat: Material) -> void:
+func _load_mesh(base: String, mat: Material, shadow := true) -> void:
 	var mesh := load_array_mesh(base)
 	if not mesh:
 		return
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	mi.material_override = mat
+	if not shadow:
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
 
 
@@ -517,7 +611,7 @@ func house_meshes() -> Dictionary:
 	# Blender-Modelle (models/houses.glb): Name -> Mesh mit house-Shader je Teil; "<name>_lod" = Fernversion
 	var doc := GLTFDocument.new()
 	var state := GLTFState.new()
-	if doc.append_from_file(ProjectSettings.globalize_path("res://models/houses.glb"), state) != OK:
+	if doc.append_from_file(ProjectSettings.globalize_path(data("res://models/houses.glb")), state) != OK:
 		return {}
 	var scene := doc.generate_scene(state)
 	var meshes := {}
@@ -572,7 +666,13 @@ func _route_trees(dir: String, meta: Dictionary, pm: Dictionary) -> PackedFloat3
 
 
 func add_leaf_trees(key: String, kind: String, buf: PackedFloat32Array) -> void:
-	## Kronenpunkte einer Kachel/eines Chunks merken (je Laubbaum 3 Punkte in der Krone, fest aus der Position gehasht)
+	## Kronenpunkte einer Kachel/eines Chunks merken (je Laubbaum 3 Punkte in der Krone, fest aus der Position gehasht);
+	## Fußpunkte aller Bäume (ohne Büsche/Unterwuchs) für sound.gd
+	if kind != "busch" and not UNDER.has(kind) and not buf.is_empty():
+		var feet: PackedVector2Array = tree_pts.get(key, PackedVector2Array())
+		for i in range(0, buf.size(), 12):
+			feet.append(Vector2(buf[i + 3], buf[i + 11]))
+		tree_pts[key] = feet
 	if not LEAF_CROWN.has(kind) or buf.is_empty():
 		return
 	var pts: PackedVector3Array = leaf_pts[key][1] if leaf_pts.has(key) else PackedVector3Array()
@@ -658,10 +758,10 @@ static func spin(buf: PackedFloat32Array) -> PackedFloat32Array:
 
 
 func plant_multimesh(parent: Node, pm: Dictionary, kind: String, buf: PackedFloat32Array, mat: Material, end: float) -> void:
-	## Pflanzen einer Kachel: Detailmodell bis TREE_DETAIL (Büsche 80 m), Fernversion dahinter bis end (0 = unbegrenzt)
+	## Pflanzen einer Kachel: Detailmodell bis TREE_DETAIL (Büsche 240 m, Unterwuchs 120 m), Fernversion dahinter bis end (0 = unbegrenzt)
 	if buf.is_empty() or not pm.has(kind):
 		return
-	var near := 80.0 if kind == "busch" else TREE_DETAIL
+	var near := 240.0 if kind == "busch" else 120.0 if UNDER.has(kind) else TREE_DETAIL
 	if pm.has(kind + "_lod"):
 		_mm(parent, pm[kind], buf, mat, 0.0, near)
 		_mm(parent, pm[kind + "_lod"], buf, mat, near, end)
@@ -690,7 +790,7 @@ func tree_meshes(path := "res://models/trees.glb") -> Dictionary:
 	# Blender-Modelle (trees.glb, deco.glb, animals.glb): Name -> Mesh (Vertexfarben, props-Shader), "<art>_lod" = Fernversion
 	var doc := GLTFDocument.new()
 	var state := GLTFState.new()
-	if doc.append_from_file(ProjectSettings.globalize_path(path), state) != OK:
+	if doc.append_from_file(ProjectSettings.globalize_path(data(path)), state) != OK:
 		return {}
 	var scene := doc.generate_scene(state)
 	var meshes := {}
@@ -711,7 +811,7 @@ func prop_meshes() -> Dictionary:
 	pm.merge(tree_meshes("res://models/deco.glb"))  # Zäune, Autos, Haltestelle … (blender/deco.py)
 	for kind: String in TREES:  # ohne trees.glb: einfache Formen je Typ
 		var fallback: String = {"fichte": "conifer", "kiefer": "conifer", "aleppo": "conifer", "pinie": "conifer", "zypresse": "conifer",
-			"palme": "palm", "busch": "shrubs"}.get(kind, "broad")
+			"palme": "palm", "busch": "shrubs", "farn": "shrubs", "hochgras": "shrubs", "staude": "shrubs"}.get(kind, "broad")
 		pm[kind] = tm.get(kind, pm[fallback])
 		if tm.has(kind + "_lod"):
 			pm[kind + "_lod"] = tm[kind + "_lod"]
@@ -906,8 +1006,32 @@ func sun_dir() -> Vector3:
 	return Vector3(sin(az) * cos(alt), sin(alt), -cos(az) * cos(alt))
 
 
+func _set_clock(hour: float) -> void:
+	## Tageszeit der Fahrt (Startbildschirm/Karte) als Sonnenzeit am Ort der Strecke -> time_shift_hours (nur diese Fahrt); die
+	## Uhr läuft danach normal weiter. -1 = echte Uhrzeit (+ Versatz aus cadence.cfg), -2 = Abendsonne: ~6° über dem Horizont.
+	if hour == -1.0:
+		return
+	var now := fposmod(Time.get_unix_time_from_system() / 3600.0 + geo.x / 15.0, 24.0)
+	if hour == -2.0:
+		hour = 12.0
+		while hour < 22.0:
+			cfg.set_value("world", "time_shift_hours", fposmod(hour - now + 12.0, 24.0) - 12.0)
+			if sun_dir().y < sin(deg_to_rad(6.0)):
+				break
+			hour += 0.1
+	cfg.set_value("world", "time_shift_hours", fposmod(hour - now + 12.0, 24.0) - 12.0)
+
+
+func apply_settings(c: ConfigFile) -> void:
+	## Grafik aus dem Einstellungsmenü (options.gd), auch mitten in der Fahrt
+	if sun:
+		sun.shadow_enabled = c.get_value("video", "shadows", true)
+	if env:
+		env.ssao_enabled = c.get_value("video", "ssao", true)
+
+
 func snow_line() -> float:
-	# Höhe (Welt-y), ab der das Monatsmittel unter 0 °C liegt -> Schnee. Klima aus route.py, Monat aus kurbel.cfg oder echtem Datum.
+	# Höhe (Welt-y), ab der das Monatsmittel unter 0 °C liegt -> Schnee. Klima aus route.py, Monat aus cadence.cfg oder echtem Datum.
 	# ponytail: 0-°C-Monatsmittel als Schneegrenze, kein Schneefall-/Niederschlagsmodell; reicht für Winter im Mittelgebirge, Sommer in den Alpen
 	if climate.is_empty():
 		return 1e5  # alte Pakete: nie Schnee
@@ -915,7 +1039,7 @@ func snow_line() -> float:
 
 
 func _season(peak_doy: float) -> float:
-	# 1 am Tag peak_doy (Nordhalbkugel), -1 ein halbes Jahr später; Südhalbkugel um ein halbes Jahr versetzt. Monat aus kurbel.cfg oder Datum
+	# 1 am Tag peak_doy (Nordhalbkugel), -1 ein halbes Jahr später; Südhalbkugel um ein halbes Jahr versetzt. Monat aus cadence.cfg oder Datum
 	var month: int = cfg.get_value("world", "month", 0)
 	var doy := (month - 0.5) * 30.44 if month > 0 else fposmod(Time.get_unix_time_from_system() / 86400.0 - 10957.5, 365.25)
 	return cos(TAU * (doy - peak_doy) / 365.25) * (-1.0 if climate.get("south", false) else 1.0)
@@ -943,82 +1067,26 @@ func _update_sky() -> void:
 	moon.light_energy = 0.12 * night
 	moon.visible = night > 0.05
 	# Umgebungslicht: tags vom Himmel, nachts/in der Dämmerung ein blaues Grundlicht, sonst wird alles schwarz
-	env.ambient_light_color = Color(0.4, 0.45, 0.65)
+	# Dämmerung: kein aufgeblasener Himmel mehr (der hellte auch Spiegelungen und Dunst auf -> blaue Welt, Straße wie Wasser,
+	# weißes Gras); stattdessen etwas mehr neutrales Umgebungslicht
+	var dusk := day * (1.0 - smoothstep(0.0, 0.2, d.y))  # Sonne knapp am Horizont
+	env.ambient_light_color = Color(0.4, 0.45, 0.65).lerp(Color(0.52, 0.5, 0.5), day)  # nachts blau, tags/Dämmerung neutral
 	env.ambient_light_sky_contribution = smoothstep(0.0, 0.25, d.y)
-	env.ambient_light_energy = lerp(0.35, 0.7, day)
-	env.background_energy_multiplier = 1.0 + 2.5 * (1.0 - smoothstep(0.0, 0.2, d.y)) * day  # Dämmerungshimmel heller
+	env.ambient_light_energy = lerp(0.35, 0.7, day) * (1.0 + 0.45 * dusk)
 	headlight.visible = night > 0.4
 
 
 func _make_rider(color: Color, label: String) -> Node3D:
-	var root := Node3D.new()
-	var dark := Color(0.08, 0.08, 0.09)
-	for z in [-0.52, 0.52]:
-		var wheel := TorusMesh.new()
-		wheel.inner_radius = 0.31
-		wheel.outer_radius = 0.35
-		_part(root, wheel, Vector3(0, 0.35, z), Vector3(0, 0, 90), dark)
-	_part(root, _box(0.05, 0.05, 0.75), Vector3(0, 0.78, 0), Vector3(0, 0, 0), color.darkened(0.4))  # Oberrohr
-	_part(root, _box(0.05, 0.05, 0.75), Vector3(0, 0.55, -0.12), Vector3(-35, 0, 0), color.darkened(0.4))  # Unterrohr
-	_part(root, _box(0.05, 0.55, 0.05), Vector3(0, 0.62, 0.2), Vector3(-15, 0, 0), color.darkened(0.4))  # Sattelrohr
-	_part(root, _box(0.45, 0.04, 0.04), Vector3(0, 0.95, -0.5), Vector3.ZERO, dark)  # Lenker
-	_part(root, _capsule(0.17, 0.75), Vector3(0, 1.17, -0.08), Vector3(-65, 0, 0), color)  # Oberkörper
-	_part(root, SphereMesh.new(), Vector3(0, 1.38, -0.42), Vector3.ZERO, Color(0.95, 0.95, 0.95)).scale = Vector3.ONE * 0.24  # Helm
-	for x in [-0.17, 0.17]:
-		_part(root, _capsule(0.05, 0.6), Vector3(x, 1.12, -0.4), Vector3(-40, 0, 0), color)  # Arme
-	var legs: Array[Node3D] = []
-	for x in [-0.11, 0.11]:
-		var hip := Node3D.new()
-		hip.position = Vector3(x, 1.0, 0.2)
-		root.add_child(hip)
-		_part(hip, _capsule(0.075, 0.8), Vector3(0, -0.36, -0.08), Vector3(-12, 0, 0), dark)
-		legs.append(hip)
-	root.set_meta("legs", legs)
-	var tag := Label3D.new()
-	tag.text = label
-	tag.position.y = 2.1
-	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	tag.font_size = 64
-	tag.name = "Tag"
-	root.add_child(tag)
-	add_child(root)
-	return root
-
-
-func _part(parent: Node3D, mesh: Mesh, pos: Vector3, rot: Vector3, color: Color) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.position = pos
-	mi.rotation_degrees = rot
-	mi.material_override = _mat(color)
-	parent.add_child(mi)
-	return mi
+	## Rennrad + Fahrer aus models/rider.glb (blender/rider.py), Beine per IK an den Pedalen; rider.gd baut ohne glb eine einfache Version
+	var r: Node3D = preload("res://rider.gd").new()
+	add_child(r)
+	r.setup(color, label)
+	return r
 
 
 func _box(x: float, y: float, z: float) -> BoxMesh:
 	var m := BoxMesh.new()
 	m.size = Vector3(x, y, z)
-	return m
-
-
-func _capsule(r: float, h: float) -> CapsuleMesh:
-	var m := CapsuleMesh.new()
-	m.radius = r
-	m.height = h
-	return m
-
-
-func _pedal(who: Node3D, rpm: float, delta: float) -> void:
-	var a: float = who.get_meta("crank", 0.0) + rpm / 60.0 * TAU * delta
-	who.set_meta("crank", a)
-	var legs: Array[Node3D] = who.get_meta("legs")
-	legs[0].rotation.x = sin(a) * 0.45
-	legs[1].rotation.x = sin(a + PI) * 0.45
-
-
-func _mat(color: Color) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = color
 	return m
 
 
@@ -1050,11 +1118,12 @@ func _process(delta: float) -> void:
 		world.update(dev.stream_s(dist), dev.view_pos(rider.global_position) if rider else Vector3.ZERO, delta)
 	if not rider:  # Workout-Welt: Kopf noch nicht da; Bridge trotzdem füttern (Watchdog)
 		_send_trainer(delta)
-		ui.show_loading(world.failed if world.failed != "" else status)
+		ui.update_loading(self, delta)
 		return
 
 	# Fahrphysik: Antrieb = P/v, Widerstand = Rollen + Hangabtrieb + Luft. Wartet, bis die Welt um den Start steht.
-	if world == null or world.world_ready:
+	_check_sensor()
+	if (world == null or world.world_ready) and not paused():
 		var theta := atan(grade_at(dist) / 100.0)
 		var m: float = cfg.get_value("rider", "mass", 89.0)
 		# Luft mit Gegen-/Rückenwind (weather.gd). Nur Fahrphysik: der Trainer bekommt weiter nur die Steigung (SIM)
@@ -1075,8 +1144,9 @@ func _process(delta: float) -> void:
 	ghost.visible = Time.get_ticks_msec() / 1000.0 - peer_seen < 5.0
 	if ghost.visible:
 		_place(ghost, peer_dist, -1.2, delta)
-	_pedal(rider, cadence if speed > 0.3 else 0.0, delta)
-	_pedal(ghost, peer_cadence, delta)
+	rider.pedal(cadence if speed > 0.3 and not paused() else 0.0, 0.0 if paused() else speed, delta)
+	if ghost.visible:
+		ghost.pedal(peer_cadence, peer_speed, delta)
 	_update_sky()
 	if not atmo.is_empty():
 		_atmosphere()
@@ -1086,10 +1156,28 @@ func _process(delta: float) -> void:
 		env, env.sky.sky_material, sun, fog_base, warmth)
 	heat_quad.visible = weather.heat > 0.02
 	_leaf_update(delta)
+	sound.update(delta)
 	RenderingServer.global_shader_parameter_set("player", dev.view_pos(rider.global_position))  # Gras um die (Flug-)Kamera
 	minimap.update(rider.position, curve.sample_baked(fposmod(dist + 30.0, route_len)), ghost.position, ghost.visible)
 	_send_trainer(delta)
 	ui.refresh(delta)
+
+
+func paused() -> bool:
+	## Pausemenü oder Auswertung offen: Strecke, Fahrzeit, Workout-Uhr und Aufzeichnung stehen. Der Trainer bekommt weiter
+	## denselben Befehl wie vorher (Widerstand unverändert) – Pause ändert nie die Trainersteuerung.
+	return (recap != null and not recap_auto) or (ui != null and ui.menu != null and ui.menu.visible) \
+		or (world != null and world.failed != "")
+
+
+func _check_sensor() -> void:
+	if not sensor_lost and Time.get_ticks_msec() / 1000.0 - data_t > SENSOR_TIMEOUT:
+		sensor_lost = true
+		power = 0.0
+		cadence = 0.0
+		hr = 0.0
+		if ui:
+			ui.flash("Kein Signal vom Trainer", preload("res://ui_theme.gd").BAD)
 
 
 func _send_trainer(delta: float) -> void:
@@ -1099,7 +1187,8 @@ func _send_trainer(delta: float) -> void:
 		return
 	send_timer = 0.2
 	var cmd := trainer_command(erg, target_watts(), trainer_grade() if rider else 0.0)
-	bridge.put_packet(JSON.stringify(cmd).to_utf8_buffer())
+	if trainer_owner:
+		bridge.put_packet(JSON.stringify(cmd).to_utf8_buffer())
 	if rider and cfg.get_value("net", "peer_host", "") != "":
 		net.put_packet(JSON.stringify({"n": rider.get_node("Tag").text, "d": dist, "c": cadence}).to_utf8_buffer())
 
@@ -1129,7 +1218,9 @@ func target_watts() -> float:
 
 
 func _shift(d: int) -> void:
-	# Schalten: im ERG mit Ziel = Intensität ±5 %, sonst virtueller Gang
+	# Schalten: im ERG mit Ziel = Intensität ±5 %, sonst virtueller Gang; in der Pause nichts
+	if paused():
+		return
 	if erg and target_watts() > 0.0:
 		erg_bias = clampi(erg_bias + d, -10, 10)
 	else:
@@ -1167,6 +1258,9 @@ func _read_bridge() -> void:
 		var msg = JSON.parse_string(bridge.get_packet().get_string_from_utf8())
 		if msg is not Dictionary:
 			continue
+		if msg.has("power") or msg.has("cadence"):
+			data_t = Time.get_ticks_msec() / 1000.0
+			sensor_lost = false
 		power = msg.get("power", power)
 		cadence = msg.get("cadence", cadence)
 		hr = msg.get("hr", hr)
@@ -1180,6 +1274,9 @@ func _read_net() -> void:
 	while net.get_available_packet_count() > 0:
 		var msg = JSON.parse_string(net.get_packet().get_string_from_utf8())
 		if msg is Dictionary and msg.has("d"):
+			var now := Time.get_ticks_msec() / 1000.0
+			if now - peer_seen < 2.0 and now > peer_seen:
+				peer_speed = lerpf(peer_speed, maxf(float(msg.d) - peer_dist, 0.0) / (now - peer_seen), 0.3)
 			peer_dist = msg.d
 			peer_name = str(msg.get("n", "Kollege"))
 			peer_cadence = msg.get("c", 0.0)
@@ -1201,6 +1298,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		diag = not diag
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_W:
 		weather.next_preset()
+	elif event is InputEventKey and event.pressed and event.keycode == KEY_M:
+		sound.toggle_mute()
 
 
 func _region() -> String:

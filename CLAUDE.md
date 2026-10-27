@@ -1,6 +1,7 @@
-# Kurbel – working rules for Claude Code
+# Cadence – working rules for Claude Code
 
-Indoor cycling sim (Zwift replacement for two riders). Godot 4.7 (GDScript) + Python `uv` scripts.
+Indoor cycling sim (Zwift replacement for two riders), formerly "Kurbel" (repo dir, `~/.cache/kurbel`, village-name
+syllables in world.py keep the old word on purpose). Godot 4.7 (GDScript) + Python `uv` scripts.
 Two world modes: **workout world** (default, `start.tscn`: procedural, generated from a workout by `world.py`) and
 **real routes** (OSM/DEM packages from `route.py`, via the map picker).
 User-facing docs: `README.md` (German). Status, debt, priorities, decisions: `docs/STATUS.md`.
@@ -54,8 +55,13 @@ world_stream.gd (loader thread reads files, main thread builds meshes, 4 ms/fram
 - `workout.py`: stdlib only, the single workout parser (start screen calls `--list`). Blueprint = phases by time, interval sets.
 - `terrain.py`: geology for world.py (noise, mountain chains, regional erosion `Regions`, gullies, strata, road `conform`).
   Pure functions of world position + seed; regions blend across borders. No Godot, no workout knowledge.
-- `blender/trees.py` -> `models/trees.glb`: tree/shrub species (+ `_lod`), vertex colours for `props.gdshader`; names = `main.TREES`.
+- `blender/trees.py` -> `models/trees.glb` + `models/leaves.png` (leaf atlas): tree/shrub species (+ `_lod`), vertex colours for
+  `props.gdshader`; near versions use leaf cards (UV.x in 1…2 = atlas, cut out in the shader); names = `main.TREES`.
   `blender/deco.py` -> `models/deco.glb` (house surroundings, cars; placed by `world._deco`) + `models/animals.glb` (`animals.gd`).
+- `blender/rider.py` -> `models/rider.glb` -> `rider.gd` (bike + rider, kit colour via vertex alpha, 2-bone leg IK; both riders).
+  Frame geometry constants are duplicated in both files – change them together.
+- UI: `ui_theme.gd` is the only style source (start, HUD, recap, picker, preview). project.godot uses `canvas_items` stretch
+  (base 1600×900, `expand`): sizes are base units; `osm_view.phys_xf()` draws map tiles 1:1 in physical pixels.
 - `world.py`: `plan()` maps blueprint -> regions (scene × biome, length = duration × reference-rider speed); `_road()` builds
   the centre line first; `field(x, z)` = terrain/colour/vegetation masks anywhere (road bed, embankment, landscape); `tile()`/
   `road_chunk()` write the same file formats as `route.py` (`save_mesh`, 12-float instance buffers, house rows). Biomes and
@@ -102,8 +108,8 @@ uv run route.py --via "…" --preview /tmp/x             # coarse 3D-preview pac
 godot --path . -- --fake        # run without hardware
 ```
 Visual check: Godot MCP (`run_project` + `take_screenshot`). Workout world: in the start scene `run_script`
-`s.list.select(i); s._on_pick(i); s._go()`; set `main.power`/`main.cadence` to ride without a trainer, `main.dist` to jump.
-Real routes: `Engine.set_meta("route", …)` or `kurbel.cfg [route] name`.
+`s.list.select(i); s._on_pick(i); s._go()`; set `main.power`/`main.cadence` to ride without a trainer (silent bridge > 3 s zeroes them once: `main.SENSOR_TIMEOUT`), `main.dist` to jump.
+Real routes: `Engine.set_meta("route", …)` or `cadence.cfg [route] name` (`main.config()`: cadence.cfg, else legacy kurbel.cfg).
 
 ## Subagents (`.claude/agents/`)
 `geo-environment-specialist` (geo data, biome rules), `procedural-world-engineer` (shaders, meshes, instancing in `main.gd`),

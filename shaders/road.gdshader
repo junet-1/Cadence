@@ -6,11 +6,13 @@ shader_type spatial;
 // CUSTOM0 (signs.lane_marks, fehlt bei alten Paketen = 0): x Randlinie links (UV.x < 0) unterbrochen (Einmündung),
 // y rechts unterbrochen, z Mittellinie durchgezogen (vor Ampeln).
 #include "res://shaders/noise.gdshaderinc"
+#include "res://shaders/snow.gdshaderinc"
 #include "res://shaders/clouds.gdshaderinc"
 
 global uniform vec3 sun_dir;
 global uniform float wetness;  // Regen: dunkler Asphalt, spiegelt (Pfützen in den Fahrspuren zuerst)
 global uniform float heat;  // Hitze: Luftspiegelung in der Ferne (Asphalt spiegelt den Himmel bei flachem Blick)
+global uniform float snow_line;  // Bankett über der Schneegrenze weiß wie das Gelände (Fahrbahn bleibt geräumt)
 
 varying vec3 wpos;
 varying vec4 lane;
@@ -66,6 +68,9 @@ void fragment() {
 		col = mix(col, col * 0.75 + vec3(0.06, 0.08, 0.02), fray * inside);
 		rough = 0.95 - 0.08 * rut;
 	}
+
+	float snow = snow_cover(wpos, vec3(0.0, 1.0, 0.0), snow_line) * (1.0 - inside);
+	col = mix(col, vec3(0.88, 0.9, 0.94) * (0.92 + 0.08 * n), snow);
 
 	// Markierung: ⅓ Mittellinie, ⅔ Randlinien, 1 beides; nur auf der Fahrbahn
 	float a = COLOR.a;

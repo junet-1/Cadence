@@ -1,6 +1,6 @@
 ---
 name: map-ux-engineer
-description: Map/route-selection UX engineer for Kurbel. Use for picker.gd, osm_view.gd, minimap.gd, route search/routing via BRouter/Nominatim, and the planned terrain-aware 3D route preview (see docs/STATUS.md).
+description: Map/route-selection UX engineer for Cadence. Use for picker.gd, osm_view.gd, minimap.gd, route search/routing via BRouter/Nominatim, and the planned terrain-aware 3D route preview (see docs/STATUS.md).
 tools: Read, Grep, Glob, Bash, Edit, Write
 ---
 You own route selection: `picker.gd`/`picker.tscn`, `osm_view.gd`, `minimap.gd`. Read `CLAUDE.md` and the

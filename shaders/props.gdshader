@@ -1,6 +1,7 @@
 shader_type spatial;
 #include "res://shaders/noise.gdshaderinc"
 // Bäume (wiegen im Wind) und Laternen (COLOR.a = leuchtet nachts). Läuft auf MultiMesh, MODEL_MATRIX = Instanz.
+// Blattkarten (blender/trees.py) haben UV.x in 1…2: Zweigbild aus dem Blatt-Atlas, Alpha schneidet aus; alles andere UV 0.
 
 global uniform float night;
 global uniform float snow_line;
@@ -8,6 +9,7 @@ global uniform vec3 wind;  // weather.gd: Richtung x/z, Stärke z
 global uniform float wind_t;
 global uniform vec2 wind_scroll;
 uniform float sway = 0.0;
+uniform sampler2D leaves : hint_default_white, filter_linear_mipmap_anisotropic, repeat_disable;  // models/leaves.png (main.leaf_atlas)
 
 void vertex() {
 	vec3 o = MODEL_MATRIX[3].xyz;
@@ -32,7 +34,17 @@ void vertex() {
 }
 
 void fragment() {
-	ALBEDO = COLOR.rgb;
+	vec3 c = COLOR.rgb;
+	if (UV.x > 0.999) {
+		vec2 uv = UV - vec2(1.0, 0.0);
+		vec4 t = texture(leaves, uv);
+		// Mip-Stufen mitteln das Alpha weg -> in der Ferne lösen sich Karten auf; mit der Stufe anheben hält die Krone dicht
+		if (t.a * (1.0 + 0.4 * max(textureQueryLod(leaves, uv).x, 0.0)) < 0.5) {
+			discard;
+		}
+		c *= t.rgb * 1.55;  // Atlas ist grau (Mittel ~0,64): Artfarbe bleibt im Mittel erhalten
+	}
+	ALBEDO = c;
 	ROUGHNESS = 0.9;
 	EMISSION = vec3(1.0, 0.75, 0.45) * COLOR.a * night * 8.0;
 }

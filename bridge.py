@@ -200,7 +200,18 @@ async def guard(run, dev):
 
 
 async def main():
-    await asyncio.get_running_loop().create_datagram_endpoint(Commands, local_addr=LISTEN)
+    # A bridge from the previous ride may still hold the port until its watchdog quits (<= 10 s, or never if the new game
+    # keeps feeding it - then that one serves us). Retry instead of crashing; give up quietly after 15 s.
+    for i in range(15):
+        try:
+            await asyncio.get_running_loop().create_datagram_endpoint(Commands, local_addr=LISTEN)
+            break
+        except OSError:
+            if i == 14:
+                print("Port 47801 belegt: eine andere Bridge bedient das Spiel, beende mich", flush=True)
+                return
+            await asyncio.sleep(1)
+    target["seen"] = time.monotonic()  # no packet ever (game closed during startup) -> the watchdog still ends us after 10 s
     await asyncio.gather(watchdog(), fake() if "--fake" in sys.argv else scan())
 
 

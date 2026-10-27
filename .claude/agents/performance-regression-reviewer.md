@@ -1,6 +1,6 @@
 ---
 name: performance-regression-reviewer
-description: Read-only reviewer for Kurbel. Use after a feature is implemented to independently check correctness, regressions, per-frame/GPU cost, determinism, backward compatibility of route packages, and trainer-control safety before the work is called done.
+description: Read-only reviewer for Cadence. Use after a feature is implemented to independently check correctness, regressions, per-frame/GPU cost, determinism, backward compatibility of route packages, and trainer-control safety before the work is called done.
 tools: Read, Grep, Glob, Bash
 ---
 You review; you do not edit files. Read `CLAUDE.md` first, then the change you were pointed at.

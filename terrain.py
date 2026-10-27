@@ -13,7 +13,7 @@ Pipeline (grob -> fein), world.py::field ruft die Stufen in dieser Reihenfolge:
               weich gemischt -> keine Nähte. Ergebnis im Speicher (LRU), nie neu gerechnet solange es gebraucht wird.
   Rinnen      gullies: hangabwärts gerichtetes Phasenrauschen 40/20/10 m, Stärke nach Hangneigung
   Schichten   terrace: Schichtstufen/Tafelberge (Wüste)
-  Straße      conform: ebene Trasse, Einschnitt 1:1 darüber, Damm 1:1,5 darunter, als Kegel von jedem Straßenstück
+  Straße      conform: ebene Trasse, Einschnitt 1:1 darüber, Damm 1:1,5 darunter (beide nach außen steiler), als Kegel von jedem Straßenstück
               (min/max über alle Stücke -> stetig, auch zwischen Serpentinen)
 
   uv run terrain.py --test
@@ -277,20 +277,24 @@ def erode(h, res, K, talus, iters=20, kd=0.6):
     """Regionale Erosion. h: Höhen (n0×n1), K: Erodierbarkeit je Zelle (0 = fest, z. B. Straßenkorridor), talus: Schüttwinkel.
     Je Schritt: Abfluss (Einzugsfläche A), Flusserosion nach Stream-Power E = K·√A·S implizit (Braun & Willett 2013, n = 1:
     eine Dreieckslösung, stabil bei jedem Schritt), Ablagerung des mitgeführten Materials wo das Gefälle nachlässt
-    (Talböden, Schwemmfächer), Hangrutschung. -> (h, Abfluss log10 A, Sediment m)."""
+    (Talböden, Schwemmfächer), Hangrutschung. -> (h, Abfluss log10 A, Sediment m).
+    Senken werden nur für den Abfluss gefüllt (Wasser findet den Überlauf), nie im Gelände: gefüllte Senken waren bis ~100 m
+    hohe, topfebene Flächen mit Wänden ringsum (VERSION 12). In einer Senke wird nicht abgetragen; der Überlauf schneidet ein."""
     n0, n1 = h.shape
     N = n0 * n1
-    h = fill(h).ravel()
+    h = h.ravel().copy()
     Kv, area = K.ravel(), res * res
     sed = np.zeros(N)
     A = np.full(N, area)
+    lake = None
     for it in range(iters):
-        if it and it % 7 == 0:
-            h = fill(h.reshape(n0, n1)).ravel()
-        rec, dist, S = receivers(h.reshape(n0, n1), res)
-        order = np.argsort(-h, kind="stable")  # Empfänger liegen immer tiefer -> topologische Ordnung
+        if it % 7 == 0:  # Seespiegel (Füllhöhe) gelegentlich neu; dazwischen reicht der alte (h sinkt nur langsam)
+            lake = fill(h.reshape(n0, n1)).ravel()
+        r = np.maximum(h, lake)  # Fließfläche: Gelände, Seen bis zum Überlauf
+        rec, dist, S = receivers(r.reshape(n0, n1), res)
+        order = np.argsort(-r, kind="stable")  # Empfänger liegen immer tiefer -> topologische Ordnung
         A = accumulate(rec, order, np.full(N, area))
-        own = rec != np.arange(N)
+        own = (rec != np.arange(N)) & (h > h[rec])  # nur wer über seinem Empfänger liegt, trägt ab (kein Auffüllen)
         F = np.where(own, Kv * np.sqrt(A) / dist, 0.0)
         # (1 + F)·h'_i − F·h'_r = h_i, von unten nach oben
         up = order[::-1]
@@ -411,6 +415,10 @@ class Regions:
 # --- Straßenanschluss ---
 
 CUT, FILL, ROUND = 1.0, 1 / 1.5, 3.0  # Einschnitt 1:1, Damm 1:1,5, Ausrundung an der Böschungskante (m)
+# Böschungen werden mit der Entfernung steiler (Neigung × (1 + e/STEEP)): unten Erdböschung, darüber Felsanschnitt bzw.
+# Stützmauer. Sonst erreichte eine 1:1-Böschung in einem Hang steiler als 45° das Gelände nie, und am Ende der Reichweite
+# stand eine bis 100 m hohe senkrechte Wand (VERSION 12). Die ersten STEEP_FROM m bleiben 1:1 bzw. 1:1,5.
+STEEP_FROM, STEEP_CUT, STEEP_FILL = 25.0, 12.0, 10.0
 
 
 def smin(a, b, k):
@@ -444,8 +452,13 @@ def conform(px, pz, N, tree, x, z, h, hw, sink, bench, reach=80.0, k=64):
     e = np.maximum(dseg - (hw[a] + u * (hw[b] - hw[a])) - bench, 0)
     es = np.where(e < ROUND, e * e / (2 * ROUND), e - ROUND / 2)
     far = np.where(ok, 1e4 * smoothstep(0.75 * reach, reach, dseg), 1e4)
-    hi = (base + CUT * es + far).min(1)
-    lo = (base - FILL * es - far).max(1)
+    # steiler nur, wo das Gelände selbst steiler ansteigt/abfällt als die Böschung (sonst bliebe 1:1 bzw. 1:1,5)
+    n_ = N[near][:, None]
+    over = np.maximum(es - STEEP_FROM, 0)
+    up_ = smoothstep(0.9, 1.3, (n_ - base) / (es + 1)) / STEEP_CUT
+    dn_ = smoothstep(0.6, 0.9, (base - n_) / (es + 1)) / STEEP_FILL
+    hi = (base + CUT * es * (1 + over * up_) + far).min(1)
+    lo = (base - FILL * es * (1 + over * dn_) - far).max(1)
     emin = np.where(ok, e, np.inf).min(1)
     kk = 1.5 * smoothstep(0, 4, emin)
     n0 = N[near]
@@ -478,6 +491,10 @@ def test():
     assert flow.max() > np.log10(16 * 16 * 200), "Abfluss sammelt sich in Rinnen"
     assert (h1[1:-1, 1:-1] <= f[1:-1, 1:-1] + 5).all() and h1.mean() < f.mean(), "Erosion trägt ab"
     assert sed.max() > 0
+    # Senken werden nicht zu ebenen Flächen aufgefüllt (früher bis ~100 m): Schüssel bleibt Schüssel, höchstens Sediment
+    bowl = 0.002 * ((X - 760) ** 2 + (Z - 760) ** 2) ** 0.5 * 16
+    hb, _, sb = erode(bowl, 16.0, K, np.full((n, n), 0.8), iters=8)
+    assert (hb - bowl).max() < 6.0 and (fill(bowl) - bowl).max() > 20, ((hb - bowl).max(), (fill(bowl) - bowl).max())
     # Hangrutschung: nichts steiler als der Schüttwinkel bleibt übrig (Stufe 40 m)
     st = np.where(X > 600, 40.0, 0.0)
     th = thermal(st, np.full((n, n), 0.7), 16.0, iters=200)
@@ -511,7 +528,17 @@ def test():
     dmin = np.hypot(gx.ravel() - rx[j], gz.ravel() - rz[j]).reshape(gx.shape)
     on = (dmin < 3.0) & (gx > 10) & (gx < 190)
     assert np.abs(H[on] - (rh[j].reshape(gx.shape)[on] - 0.15)).max() < 0.5
-    assert np.abs(np.diff(H, axis=0)).max() < 1.3 and np.abs(np.diff(H, axis=1)).max() < 1.3, "stetig, Böschung ≤ 1:1"
+    near_ = (emin.reshape(gx.shape) < STEEP_FROM)[1:]
+    assert np.abs(np.diff(H, axis=0))[near_].max() < 1.3, "Böschung nah an der Straße ≤ 1:1"
+    assert np.abs(np.diff(H, axis=0)).max() < 2.5 and np.abs(np.diff(H, axis=1)).max() < 2.5, "stetig (hohe Dämme steiler)"
+    # Hang steiler als 1:1 (Neigung 1,8): Böschungen erreichen das Gelände (Stützmauer-steil, < 8:1), keine Stufe am Ende der
+    # Reichweite (vorher 20 m auf 0,5 m)
+    sx = np.arange(0, 300, 5.0)
+    tr2 = cKDTree(np.column_stack([sx, np.zeros_like(sx)]))
+    gx2, gz2 = np.meshgrid(np.arange(100, 200, 1.0), np.arange(-100, 100, 0.5))
+    H2, _ = conform(gx2.ravel(), gz2.ravel(), (1.8 * gz2).ravel(), tr2, sx, np.zeros_like(sx), np.zeros_like(sx),
+                    np.full(len(sx), 3.0), 0.15, 3.5)
+    assert np.abs(np.diff(H2.reshape(gx2.shape), axis=0)).max() / 0.5 < 8.0, np.abs(np.diff(H2.reshape(gx2.shape), axis=0)).max() / 0.5
     # Rinnen: stetig, auf flachem Land null
     xs = np.linspace(0, 300, 3001)
     g = gullies(xs, np.zeros_like(xs), np.full_like(xs, 0.4), np.full_like(xs, 0.1), 3)

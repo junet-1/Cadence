@@ -1,9 +1,14 @@
 extends Control
-## Workout-Profil als Balken (Höhe = Anteil FTP, Farbe = Zone), Strich = aktuelle Workout-Zeit. HUD unten und Startbildschirm.
+## Workout-Profil als Balken (Höhe = Anteil FTP, Farbe = Leistungszone), Strich = aktuelle Workout-Zeit. HUD unten und Startbildschirm.
 
-const COLORS := {"recovery": Color(0.55, 0.55, 0.6), "warmup": Color(0.45, 0.6, 0.75), "cooldown": Color(0.45, 0.6, 0.75),
-	"endurance": Color(0.25, 0.55, 0.95), "free": Color(0.6, 0.6, 0.6), "tempo": Color(0.3, 0.75, 0.35),
-	"threshold": Color(0.95, 0.75, 0.15), "vo2": Color(0.9, 0.3, 0.2)}
+const UI := preload("res://ui_theme.gd")
+const FREE := Color(0.6, 0.6, 0.6)
+
+
+static func color(p0: float, p1: float, free: bool) -> Color:
+	## Farbe eines Abschnitts = Leistungszone seines mittleren Ziels (gleiche Farben wie HUD und Auswertung)
+	return FREE if free else UI.zone((p0 + p1) * 0.5)[2]
+
 
 var segs: Array = []  # [t0, dur, p0, p1, kind, frei]
 var duration := 1.0
@@ -39,14 +44,18 @@ func _ready() -> void:
 
 
 func _draw() -> void:
-	draw_style_box(preload("res://ui_theme.gd").box(Color(0.08, 0.09, 0.11, 0.78), 10, 0), Rect2(Vector2.ZERO, size))
+	draw_style_box(UI.box(UI.PANEL, 10, 0), Rect2(Vector2.ZERO, size))
+	if segs.is_empty():  # freie Fahrt: kein Profil
+		draw_string(get_theme_default_font(), Vector2(0, size.y * 0.5 + 7), "Ohne Intervalle – fahr, wie du magst",
+			HORIZONTAL_ALIGNMENT_CENTER, size.x, 18, UI.MUTED)
+		return
 	var top := 1.6  # 160 % FTP füllt die Höhe
 	for s in segs:
 		var x0: float = s[0] / duration * size.x
 		var x1: float = (s[0] + s[1]) / duration * size.x
 		var h0: float = (0.5 if s[5] else s[2]) / top * size.y
 		var h1: float = (0.5 if s[5] else s[3]) / top * size.y
-		var c: Color = COLORS.get(s[4], Color.GRAY)
+		var c := color(s[2], s[3], s[5])
 		draw_colored_polygon(PackedVector2Array([Vector2(x0, size.y), Vector2(x0, size.y - h0), Vector2(x1, size.y - h1), Vector2(x1, size.y)]), c)
 	var ftp_y := size.y - 1.0 / top * size.y
 	draw_dashed_line(Vector2(0, ftp_y), Vector2(size.x, ftp_y), Color(1, 1, 1, 0.5), 1.0, 6.0)
