@@ -1,0 +1,11 @@
+<workout_file>
+    <author>Kurbel</author>
+    <name>Tempo 3 × 20 min</name>
+    <description>Zügige Ausdauer (Zone 3, 76–90 % FTP): 3 × 20 min bei 83 % mit 5 min Erholung. Baut muskuläre Ausdauer auf, ohne so tief zu ermüden wie Schwellenarbeit.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="600" PowerLow="0.50" PowerHigh="0.72"/>
+        <IntervalsT Repeat="3" OnDuration="1200" OffDuration="300" OnPower="0.83" OffPower="0.60"/>
+        <Cooldown Duration="480" PowerLow="0.60" PowerHigh="0.40"/>
+    </workout>
+</workout_file>

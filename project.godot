@@ -1,0 +1,63 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="Kurbel"
+run/main_scene="res://start.tscn"
+config/features=PackedStringArray("4.7")
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+
+[shader_globals]
+
+night={
+"type": "float",
+"value": 0.0
+}
+player={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+snow_line={
+"type": "float",
+"value": 100000.0
+}
+clouds={
+"type": "vec4",
+"value": Vector4(0, 0, 0.3, 1600)
+}
+wind={
+"type": "vec3",
+"value": Vector3(1, 0.4, 0.3)
+}
+wetness={
+"type": "float",
+"value": 0.0
+}
+sun_dir={
+"type": "vec3",
+"value": Vector3(0, 1, 0)
+}
+heat={
+"type": "float",
+"value": 0.0
+}
+wind_t={
+"type": "float",
+"value": 0.0
+}
+wind_scroll={
+"type": "vec2",
+"value": Vector2(0, 0)
+}

@@ -1,0 +1,6 @@
+.godot/
+.mcp/
+routes/
+__pycache__/
+*.pyc
+mcp_bridge.gd*

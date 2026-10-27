@@ -1,0 +1,13 @@
+<workout_file>
+    <author>Kurbel</author>
+    <name>Norweger 4 × 4 min</name>
+    <description>Norwegisches 4 × 4 (Helgerud et al. 2007): 4 × 4 min bei 90–95 % HFmax, dazwischen 3 min aktive Erholung (~70 % HFmax). Auf dem Rad etwa 115 % FTP / 60 % FTP.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="600" PowerLow="0.50" PowerHigh="0.75"/>
+        <SteadyState Duration="120" Power="0.85"/>
+        <SteadyState Duration="120" Power="0.60"/>
+        <IntervalsT Repeat="4" OnDuration="240" OffDuration="180" OnPower="1.15" OffPower="0.60"/>
+        <Cooldown Duration="600" PowerLow="0.60" PowerHigh="0.40"/>
+    </workout>
+</workout_file>

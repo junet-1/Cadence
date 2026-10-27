@@ -1,0 +1,11 @@
+<workout_file>
+    <author>Kurbel</author>
+    <name>Lange Grundlage 2 h</name>
+    <description>Zwei Stunden in Zone 2 (56–75 % FTP, hier 68 %): die Basis jeder Ausdauer. Gleichmäßig, Trittfrequenz locker, Gespräch muss möglich sein.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="600" PowerLow="0.45" PowerHigh="0.65"/>
+        <SteadyState Duration="6300" Power="0.68"/>
+        <Cooldown Duration="300" PowerLow="0.60" PowerHigh="0.45"/>
+    </workout>
+</workout_file>

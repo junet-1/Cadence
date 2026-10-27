@@ -1,0 +1,15 @@
+<workout_file>
+    <author>Kurbel</author>
+    <name>FTP-Test 20 min</name>
+    <description>Test nach Allen/Coggan: 20 min einfahren, 3 × 1 min schnell treten, 5 min locker, 5 min maximal (leert die anaeroben Speicher), 5 min locker, dann 20 min so hart wie gleichmäßig möglich. FTP = 95 % der 20-min-Leistung. Die Testblöcke sind frei (Trainer im SIM-Modus, du bestimmst die Leistung).</description>
+    <sportType>bike</sportType>
+    <workout>
+        <SteadyState Duration="1200" Power="0.65"/>
+        <IntervalsT Repeat="3" OnDuration="60" OffDuration="60" OnPower="0.95" OffPower="0.55"/>
+        <SteadyState Duration="240" Power="0.50"/>
+        <FreeRide Duration="300"/>
+        <SteadyState Duration="300" Power="0.50"/>
+        <FreeRide Duration="1200"/>
+        <Cooldown Duration="600" PowerLow="0.55" PowerHigh="0.40"/>
+    </workout>
+</workout_file>

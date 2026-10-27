@@ -1,0 +1,13 @@
+<workout_file>
+    <author>Kurbel</author>
+    <name>VO2max 5 × 3 min</name>
+    <description>Szenario B: fünf harte 3-Minuten-Intervalle mit 3 min Erholung.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="720" PowerLow="0.45" PowerHigh="0.75"/>
+        <SteadyState Duration="180" Power="0.70"/>
+        <IntervalsT Repeat="5" OnDuration="180" OffDuration="180" OnPower="1.15" OffPower="0.50"/>
+        <SteadyState Duration="300" Power="0.62"/>
+        <Cooldown Duration="480" PowerLow="0.60" PowerHigh="0.40"/>
+    </workout>
+</workout_file>
